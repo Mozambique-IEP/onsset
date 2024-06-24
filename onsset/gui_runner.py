@@ -21,7 +21,7 @@ specs_path = filedialog.askopenfilename()
 specs = pd.read_excel(specs_path, index_col=0)
 
 if choice == 1:
-    messagebox.showinfo('OnSSET', 'Open the file containing separated countries')
+    messagebox.showinfo('OnSSET', 'Open the file with extracted GIS data')
     csv_path = filedialog.askopenfilename()
 
     messagebox.showinfo('OnSSET', 'Browse to result folder and name the calibrated file')
@@ -41,5 +41,7 @@ elif choice == 2:
     results_folder = filedialog.askdirectory()
     messagebox.showinfo('OnSSET', 'Browse to SUMMARIES folder and name the scenario to save outputs')
     summary_folder = filedialog.askdirectory()
+    messagebox.showinfo('OnSSET', 'Open the file with hourly PV data')
+    pv_path = filedialog.askopenfilename()
 
-    scenario(specs_path, calibrated_csv_path, results_folder, summary_folder)
+    scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv_path)
