@@ -152,6 +152,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
         productive_demand = scenario_parameters.iloc[productive_index]['ProductiveDemand']
         prioritization = scenario_parameters.iloc[prio_index]['PrioritizationAlgorithm']
         auto_intensification = scenario_parameters.iloc[prio_index]['AutoIntensificationKM']
+        max_auto_intensification_cost = scenario_parameters.iloc[prio_index]['MaxIntensificationCost']  # Max household connection cost for forced grid intensification
 
         settlements_out_csv = os.path.join(results_folder,
                                            '{}-1-{}_{}_{}_{}.csv'.format(country_id, tier_index, grid_index, pv_index,
@@ -160,12 +161,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                    '{}-1-{}_{}_{}_{}_summary.csv'.format(country_id, tier_index, grid_index, pv_index,
                                                                          prio_index))
 
-        # RUN_PARAM: One shall define here the years of analysis (excluding start year),
-        # together with access targets per interval and timestep duration
-
         elements = ["1.Population", "2.New_Connections", "3.Capacity", "4.Investment", "5.AnnualEmissions"]
-        techs = ["Grid", "Grid-extension", "SA_PV", "MG_Diesel", "MG_PVHybrid", "MG_Wind", "MG_Hydro"]
-        tech_codes = [1, 2, 3, 4, 5, 6, 7]
 
         techs = ["Grid", "SA_PV", "MG_Diesel", "MG_PVHybrid", "MG_Wind", "MG_Hydro"]
         tech_codes = [1, 3, 4, 5, 6, 7]
@@ -189,6 +185,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
         grid_emission_factor = scenario_parameters['GridEmissionFactor'][grid_index]
         grid_capacity_investment = scenario_parameters['GridCapacityInvestmentCost'][grid_index]
         grid_re_share = scenario_parameters['GridRenShare'][grid_index]
+
 
         # Carbon cost represents the cost in USD/tonCO2eq, which is converted and added to the diesel price
         diesel_price = float(scenario_parameters.iloc[0]['DieselPrice'] + (carbon_cost / 1000000) * 256.9131097 * 9.9445485)
@@ -256,7 +253,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             mg_interconnection = True  # True if mini-grids are allowed to be integrated into the grid, else False
 
             mg_pv_hybrid_params = {
-                'min_mg_size_ppl': 1000,  # minimum number of people in settlement for mini-grids to be considered as an option
+                'min_mg_size_ppl': 5000,  # minimum number of people in settlement for mini-grids to be considered as an option
                 'diesel_cost': 261,  # diesel generator capital cost, USD/kW rated power
                 'discount_rate': discount_rate,
                 'n_chg': 0.93,  # charge efficiency of battery
@@ -360,7 +357,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                         auto_intensification=auto_intensification,
                                         prioritization=prioritization,
                                         new_investment=grid_investment,
-                                        new_capacity=grid_capacity)
+                                        new_capacity=grid_capacity,
+                                        threshold=max_auto_intensification_cost)
 
             onsseter.results_columns(techs, tech_codes, year, time_step, prioritization, auto_intensification,
                                      mg_interconnection)
