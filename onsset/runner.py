@@ -252,8 +252,9 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
 
             mg_interconnection = True  # True if mini-grids are allowed to be integrated into the grid, else False
 
+            mg_hybrid_lookup_table = True
             mg_pv_hybrid_params = {
-                'min_mg_size_ppl': 5000,  # minimum number of people in settlement for mini-grids to be considered as an option
+                'min_mg_size_ppl': 500,  # minimum number of people in settlement for mini-grids to be considered as an option
                 'diesel_cost': 261,  # diesel generator capital cost, USD/kW rated power
                 'discount_rate': discount_rate,
                 'n_chg': 0.93,  # charge efficiency of battery
@@ -314,9 +315,14 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
 
             onsseter.diesel_cost_columns(sa_diesel_cost, mg_diesel_cost, year)
 
-            hybrid_lcoe, hybrid_capacity, hybrid_investment = onsseter.pv_hybrids_lcoe(year, time_step, end_year,
-                                                                                       mg_pv_hybrid_params,
-                                                                                       pv_folder_path=pv_path)
+            if mg_hybrid_lookup_table:
+                hybrid_lcoe, hybrid_capacity, hybrid_investment = \
+                    onsseter.pv_hybrids_lcoe_lookuptable(year, time_step, end_year,
+                                                         mg_pv_hybrid_params, pv_path=pv_path)
+            else:
+                hybrid_lcoe, hybrid_capacity, hybrid_investment = \
+                    onsseter.pv_hybrids_lcoe(year, time_step, end_year,
+                                             mg_pv_hybrid_params, pv_folder_path=pv_path)
 
             mg_pv_hybrid_calc = Technology(om_of_td_lines=0.02,
                                            distribution_losses=0.05,
