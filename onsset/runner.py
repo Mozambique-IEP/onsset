@@ -374,6 +374,13 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                                         mg_wind_capacity, mg_hydro_investment, mg_hydro_capacity,
                                                         grid_investment, grid_capacity, year)
 
+            if year == yearsofanalysis[-1]:
+                final_step = True
+            else:
+                final_step = False
+
+            onsseter.check_grid_limitations(grid_connect_limit, grid_cap_gen_limit, year, time_step, final_step)
+
             onsseter.apply_limitations(eleclimit, year, time_step, prioritization, auto_intensification)
 
             onsseter.calculate_emission(grid_factor=grid_emission_factor, year=year,
