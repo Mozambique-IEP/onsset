@@ -349,6 +349,22 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                 onsseter.pre_electrification(grid_price, year, time_step, end_year, grid_calc,
                                              annual_grid_cap_gen_limit, annual_new_grid_connections_limit)
 
+            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc)
+
+            onsseter.elec_extension_numba(grid_calc,
+                                            max_grid_extension_dist,
+                                            year,
+                                            start_year,
+                                            end_year,
+                                            time_step,
+                                            grid_cap_gen_limit,
+                                            grid_connect_limit,
+                                            auto_intensification=auto_intensification,
+                                            prioritization=prioritization,
+                                            new_investment=grid_investment,
+                                            new_capacity=grid_capacity,
+                                            threshold=max_auto_intensification_cost)
+
             onsseter.df[SET_LCOE_GRID + "{}".format(year)], onsseter.df[SET_MIN_GRID_DIST + "{}".format(year)], \
                 onsseter.df[SET_ELEC_ORDER + "{}".format(year)], onsseter.df[SET_MV_CONNECT_DIST], grid_investment,\
                 grid_capacity = \
