@@ -54,10 +54,9 @@ def calibration(specs_path, csv_path, specs_path_calib, calibrated_csv_path):
     tier_2 = 219
     tier_3 = 803
     tier_4 = 2117
-    tier_5 = 2993
+    tier_5 = 3000
 
-    onsseter.prepare_wtf_tier_columns(num_people_per_hh_rural, num_people_per_hh_urban,
-                                      tier_1, tier_2, tier_3, tier_4, tier_5)
+    onsseter.prepare_wtf_tier_columns(tier_1, tier_2, tier_3, tier_4, tier_5)
     onsseter.condition_df()
     onsseter.df[SET_GRID_PENALTY] = onsseter.grid_penalties(onsseter.df)
 
@@ -75,7 +74,7 @@ def calibration(specs_path, csv_path, specs_path_calib, calibrated_csv_path):
     specs_data.loc[0, SPE_URBAN_MODELLED] = urban_modelled
 
     elec_calibration_results = onsseter.calibrate_grid_elec_current(elec_actual, elec_actual_urban, elec_actual_rural,
-                                                               start_year, buffer=False)
+                                                                    start_year, buffer=False)
 
     mg_pop_calib = onsseter.mg_elec_current(start_year)
 
@@ -310,8 +309,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             annual_grid_cap_gen_limit = specs_data.loc[year, 'NewGridGenerationCapacityAnnualLimitMW'] * 1000
             annual_new_grid_connections_limit = specs_data.loc[year]['GridConnectionsLimitThousands'] * 1000
 
-            onsseter.set_scenario_variables(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
-                                            urban_tier, rural_tier, productive_demand, base_year)
+            onsseter.calculate_demand(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
+                                      urban_tier, rural_tier)
 
             onsseter.diesel_cost_columns(sa_diesel_cost, mg_diesel_cost, year)
 
@@ -391,9 +390,17 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                                         mg_wind_capacity, mg_hydro_investment, mg_hydro_capacity,
                                                         grid_investment, grid_capacity, year)
 
+            if year == yearsofanalysis[-1]:
+                final_step = True
+            else:
+                final_step = False
+
+            onsseter.check_grid_limitations(grid_connect_limit, grid_cap_gen_limit, year, time_step, final_step)
+
             onsseter.apply_limitations(eleclimit, year, time_step, prioritization, auto_intensification)
 
-            onsseter.calculate_emission(grid_factor=grid_emission_factor, year=year, time_step=time_step, start_year=start_year)
+            onsseter.calculate_emission(grid_factor=grid_emission_factor, year=year,
+                                        time_step=time_step, start_year=start_year)
 
             onsseter.calc_summaries(df_summary, sumtechs, tech_codes, year, base_year)
 
