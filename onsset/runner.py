@@ -306,8 +306,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             num_people_per_hh_rural = float(specs_data.loc[year][SPE_NUM_PEOPLE_PER_HH_RURAL])
             num_people_per_hh_urban = float(specs_data.loc[year][SPE_NUM_PEOPLE_PER_HH_URBAN])
             max_grid_extension_dist = float(specs_data.loc[year][SPE_MAX_GRID_EXTENSION_DIST])
-            annual_grid_cap_gen_limit = specs_data.loc[year, 'NewGridGenerationCapacityAnnualLimitMW'] * 1000
-            annual_new_grid_connections_limit = specs_data.loc[year]['GridConnectionsLimitThousands'] * 1000
+            annual_grid_cap_gen_limit = specs_data.loc[year, 'NewGridGenerationCapacityAnnualLimitMW'] * 1000 * time_step
+            annual_new_grid_connections_limit = specs_data.loc[year]['GridConnectionsLimitThousands'] * 1000 * time_step
 
             onsseter.calculate_demand(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
                                       urban_tier, rural_tier)
@@ -350,36 +350,23 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
 
             onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc)
 
-            onsseter.elec_extension_numba(grid_calc,
-                                            max_grid_extension_dist,
-                                            year,
-                                            start_year,
-                                            end_year,
-                                            time_step,
-                                            grid_cap_gen_limit,
-                                            grid_connect_limit,
-                                            auto_intensification=auto_intensification,
-                                            prioritization=prioritization,
-                                            new_investment=grid_investment,
-                                            new_capacity=grid_capacity,
-                                            threshold=max_auto_intensification_cost)
+            onsseter.pre_selection(eleclimit, year, time_step, prioritization, auto_intensification)
 
             onsseter.df[SET_LCOE_GRID + "{}".format(year)], onsseter.df[SET_MIN_GRID_DIST + "{}".format(year)], \
-                onsseter.df[SET_ELEC_ORDER + "{}".format(year)], onsseter.df[SET_MV_CONNECT_DIST], grid_investment,\
-                grid_capacity = \
-                onsseter.elec_extension(grid_calc,
-                                        max_grid_extension_dist,
-                                        year,
-                                        start_year,
-                                        end_year,
-                                        time_step,
-                                        grid_cap_gen_limit,
-                                        grid_connect_limit,
-                                        auto_intensification=auto_intensification,
-                                        prioritization=prioritization,
-                                        new_investment=grid_investment,
-                                        new_capacity=grid_capacity,
-                                        threshold=max_auto_intensification_cost)
+                grid_investment, grid_capacity = \
+                onsseter.elec_extension_numba(grid_calc,
+                                              max_grid_extension_dist,
+                                              year,
+                                              start_year,
+                                              end_year,
+                                              time_step,
+                                              grid_cap_gen_limit,
+                                              grid_connect_limit,
+                                              auto_intensification=auto_intensification,
+                                              prioritization=prioritization,
+                                              new_investment=grid_investment,
+                                              new_capacity=grid_capacity,
+                                              threshold=max_auto_intensification_cost)
 
             onsseter.results_columns(techs, tech_codes, year, time_step, prioritization, auto_intensification,
                                      mg_interconnection)
@@ -395,7 +382,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             else:
                 final_step = False
 
-            onsseter.check_grid_limitations(grid_connect_limit, grid_cap_gen_limit, year, time_step, final_step)
+            onsseter.check_grid_limitations(annual_new_grid_connections_limit, annual_grid_cap_gen_limit, year, time_step, final_step)
 
             onsseter.apply_limitations(eleclimit, year, time_step, prioritization, auto_intensification)
 

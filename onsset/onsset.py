@@ -425,6 +425,7 @@ class Technology:
                                             np.where(hv_km == 0, np.where(
                                                 mv_km == 0, np.ceil(peak_load / self.mv_lv_sub_station_type), 0), 0),
                                             np.ceil(peak_load / self.mv_lv_sub_station_type))
+                no_of_mv_lv_subs = np.ceil(peak_load / self.mv_lv_sub_station_type)  # ToDo review if the above is correct (returns no MV/LV subs sometimes)
 
             no_of_hv_mv_subs += additional_transformer  # to connect the MV line to the HV grid
 
@@ -587,51 +588,51 @@ class Technology:
             self.transmission_network(peak_load_new, additional_mv_line_length, additional_transformer,
                                       mv_distribution=mv_distribution)
 
-        mv_lines_distribution_length = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        mv_lines_distribution_length = np.where((prev_code != 3) & (prev_code != 99),
                                                 mv_lines_distribution_length_additional,
                                                 mv_lines_distribution_length_new)
 
-        hv_lines_total_length = np.where((people != new_connections) & (prev_code < 2),
+        hv_lines_total_length = np.where((people != new_connections) & (prev_code < 3),
                                          hv_lines_total_length_additional,
                                          hv_lines_total_length_new)
 
-        mv_lines_connection_length = np.where((people != new_connections) & (prev_code < 2),
+        mv_lines_connection_length = np.where((people != new_connections) & (prev_code < 3),
                                               mv_lines_connection_length_additional,
                                               mv_lines_connection_length_new)
 
-        total_lv_lines_length = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        total_lv_lines_length = np.where((prev_code != 3) & (prev_code != 99),
                                          total_lv_lines_length_additional,
                                          total_lv_lines_length_new)
 
-        num_transformers = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        num_transformers = np.where((prev_code != 3) & (prev_code != 99),
                                     num_transformers_additional,
                                     num_transformers_new)
 
-        total_nodes = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        total_nodes = np.where((prev_code != 3) & (prev_code != 99),
                                total_nodes_additional,
                                total_nodes_new)
 
-        no_of_hv_lv_substation = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        no_of_hv_lv_substation = np.where((prev_code != 3) & (prev_code != 99),
                                           no_of_hv_lv_substation_additional,
                                           no_of_hv_lv_substation_new)
 
-        no_of_hv_mv_substation = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        no_of_hv_mv_substation = np.where((prev_code != 3) & (prev_code != 99),
                                           no_of_hv_mv_substation_additional,
                                           no_of_hv_mv_substation_new)
 
-        no_of_mv_mv_substation = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        no_of_mv_mv_substation = np.where((prev_code != 3) & (prev_code != 99),
                                           no_of_mv_mv_substation_additional,
                                           no_of_mv_mv_substation_new)
 
-        no_of_mv_lv_substation = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        no_of_mv_lv_substation = np.where((prev_code != 3) & (prev_code != 99),
                                           no_of_mv_lv_substation_additional,
                                           no_of_mv_lv_substation_new)
 
-        generation_per_year = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        generation_per_year = np.where((prev_code != 3) & (prev_code != 99),
                                        generation_per_year_additional,
                                        generation_per_year_new)
 
-        peak_load = np.where((people != new_connections) & ((prev_code < 2) | (prev_code > 3)),
+        peak_load = np.where(prev_code != 99,  # ToDo check
                              peak_load_additional,
                              peak_load_new)
 
@@ -1370,16 +1371,25 @@ class SettlementProcessor:
         self.df['MaxDist' + '{}'.format(year)] = max_dist
         self.df['GridCapacityRequired'] = peak_load / grid_calc.capacity_factor
         self.df['GridCapacityRequired' + '{}'.format(year)] = peak_load / grid_calc.capacity_factor
+        self.df['MaxIntensificationDist'] = (1800 - filter_investment[0] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) / (cost_per_km / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) # Todo
 
     @staticmethod
     @njit
     def extension_dist_and_check(unelectrified, x_coordinates, y_coordinates,
-                                 x_unelectrified, y_unelectrified, max_dist):
+                                 x_unelectrified, y_unelectrified, max_dist, pre_selection,
+                                 new_connections, grid_connect_limit,
+                                 new_capacity, new_capacity_limit,
+                                 auto_intensification, max_intensification_dist):
         newly_electrified = []
         newly_electrified_dist = []
         new_mv_line_coords = []
+        remain_unelectrified = []
 
         for i in range(len(unelectrified)):
+
+            if (grid_connect_limit <= 0) | (new_capacity_limit <= 0):
+                break
+
             id = unelectrified[i]
             x = x_unelectrified[i]
             y = y_unelectrified[i]
@@ -1388,12 +1398,15 @@ class SettlementProcessor:
             min_dist = min(dist)
             min_index = np.argmin(dist)
 
-            if (min_dist < max_dist[i]) & (min_dist < 50):
+            if (min_dist < max_dist[i]) & (min_dist < 50) & (pre_selection[i] == 1) & (max_intensification_dist[i] < auto_intensification):
                 newly_electrified.append(id)
                 x_coordinates = np.append(x_coordinates, x)
                 y_coordinates = np.append(y_coordinates, y)
                 newly_electrified_dist.append(min_dist)
                 new_mv_line_coords.append((x, y, x_coordinates[min_index], y_coordinates[min_index]))
+
+                grid_connect_limit -= new_connections[i]
+                new_capacity_limit -= new_capacity[i]
 
                 if min_dist > 0.006:
                     # Calculate the number of intermediate points
@@ -1405,23 +1418,25 @@ class SettlementProcessor:
                         y_i = y + i * (y_coordinates[min_index] - y) / (number_of_points + 1)
                         x_coordinates = np.append(x_coordinates, x_i)
                         y_coordinates = np.append(y_coordinates, y_i)
+            else:
+                remain_unelectrified.append(id)
 
-        return newly_electrified, newly_electrified_dist, new_mv_line_coords
+        return newly_electrified, newly_electrified_dist, new_mv_line_coords, \
+            remain_unelectrified, x_coordinates, y_coordinates, grid_connect_limit, new_capacity_limit
 
     def elec_extension_numba(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
                        grid_connect_limit, new_investment, new_capacity, auto_intensification=0, prioritization=0,
                        threshold=999999999):
 
         prio = int(prioritization)
-        self.df['NearMV'] = np.where(self.df[SET_MV_DIST_CURRENT] < 25, 1, 0)
         self.df['NearRoads'] = np.where(self.df[SET_ROAD_DIST] < 0.5, 0, 1)
-        self.df['ExtRatio'] = self.df['MaxDist' + "{}".format(year)] / self.df[SET_MV_DIST_CURRENT]
 
-        #self.df.loc[self.df['RoadDist'] > 1, 'MaxDist' + "{}".format(year)] = -1
-        self.df.loc[self.df[SET_MV_DIST_CURRENT] > 50, 'MaxDist' + "{}".format(year)] = -1
-
-        #self.df.sort_values(by=['NearMV', 'NearRoads', 'ExtRatio'], ascending=False, inplace=True)
+        # Re-sort df to start extending MV lines along (close to) road network
         self.df.sort_values(by=['NearRoads', SET_MV_DIST_CURRENT], inplace=True)
+        del self.df['NearRoads']
+
+        # Ensure MV lines are not extended further than their maximum distance
+        self.df.loc[self.df[SET_MV_DIST_CURRENT] > max_dist, 'MaxDist' + "{}".format(year)] = -1
 
         prev_code = self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)].copy(deep=True)
         if year - time_step == start_year:
@@ -1439,35 +1454,100 @@ class SettlementProcessor:
         electrified = self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year-time_step)] < 3].index.tolist()
         unelectrified = self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year-time_step)] >= 3].index.tolist()
 
-        #electrified = np.where(self.df[SET_ELEC_FINAL_CODE + "{}".format(year-time_step)] < 3)[0].tolist()
-        #unelectrified = np.where((self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
-        #                         (self.df['MaxDist' + "{}".format(year)] > 0))[0].tolist()
-
         x_coordinates = np.array(self.df.loc[electrified][SET_X_DEG])
         y_coordinates = np.array(self.df.loc[electrified][SET_Y_DEG])
 
         t1 = time.time()
 
-        newly_electrified, newly_electrified_dists, new_mv_line_coords = self.extension_dist_and_check(unelectrified,
-                                                                                   x_coordinates,
-                                                                                   y_coordinates,
-                                                                                   np.array(self.df.loc[unelectrified][SET_X_DEG]),
-                                                                                   np.array(self.df.loc[unelectrified][SET_Y_DEG]),
-                                                                                   np.array(self.df.loc[unelectrified]['MaxDist' + "{}".format(year)]))
+        new_electrified = []
+        new_dists = []
+        new_lines = []
+
+        iterate = True
+        i = 0
+
+        while iterate:
+
+            newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+                unelectrified, x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit = \
+                self.extension_dist_and_check(unelectrified,
+                                              x_coordinates,
+                                              y_coordinates,
+                                              np.array(self.df.loc[unelectrified][SET_X_DEG]),
+                                              np.array(self.df.loc[unelectrified][SET_Y_DEG]),
+                                              np.array(self.df.loc[unelectrified]['MaxDist' + "{}".format(year)]),
+                                              np.array(self.df.loc[unelectrified]['PreSelection' + "{}".format(year)]),
+                                              np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                              grid_connect_limit,
+                                              np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
+                                              grid_capacity_limit,
+                                              999999999,
+                                              np.array(self.df.loc[unelectrified][SET_MV_DIST_CURRENT]))
+
+            new_lines += new_mv_line_coords
+            new_electrified += newly_electrified
+            new_dists += newly_electrified_dists
+
+            i += 1
+            if len(newly_electrified) == 0:
+                iterate = False
+
+        # Intensification round
+
+        iterate = True
+        i = 0
+
+        while iterate:
+
+            newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+                unelectrified, x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit = \
+                self.extension_dist_and_check(unelectrified,
+                                              x_coordinates,
+                                              y_coordinates,
+                                              np.array(self.df.loc[unelectrified][SET_X_DEG]),
+                                              np.array(self.df.loc[unelectrified][SET_Y_DEG]),
+                                              np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
+                                              np.array(self.df.loc[unelectrified]['PreSelection' + "{}".format(year)]),
+                                              np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                              grid_connect_limit,
+                                              np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
+                                              grid_capacity_limit,
+                                              auto_intensification,
+                                              np.array(self.df.loc[unelectrified][SET_MV_DIST_CURRENT]))
+
+            new_lines += new_mv_line_coords
+            new_electrified += newly_electrified
+            new_dists += newly_electrified_dists
+
+            i += 1
+            if len(newly_electrified) == 0:
+                iterate = False
 
         features = []
 
-        for coord in new_mv_line_coords:
+        for coord in new_lines:
             x_start, y_start, x_end, y_end = coord
             line = shapely.geometry.LineString([(x_start, y_start), (x_end, y_end)])
             feature = geojson.Feature(geometry=line, properties={})
             features.append(feature)
 
+        self.df['NewDist'] = 0.
+        self.df.loc[new_electrified, 'NewDist'] = new_dists
+
+        self.df.sort_index(inplace=True)
+
+        grid_lcoe, grid_investment, grid_capacity = \
+            self.get_grid_lcoe(self.df['NewDist'], 0, 0, year, time_step, end_year, grid_calc)
+
+        grid_lcoe = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 99, grid_lcoe[0])
+        grid_investment = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 0, grid_investment[0])
+        grid_capacity = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 0, grid_capacity[0])
+
         # Create a FeatureCollection
         feature_collection = geojson.FeatureCollection(features)
 
         # Save to a GeoJSON file
-        with open(r'C:\Users\andre\OneDrive\Dokument\GitHub\SEforALL-onsset\test_data\output\new_mv_lines{}.geojson'.format(year), 'w') as f:
+        with open(r'C:\Users\andre\OneDrive\Dokument\GitHub\SEforALL-onsset\test_data\output\new_mv_lines{}.geojson'.format(year), 'w') as f: # Todo
             geojson.dump(feature_collection, f)
 
         t2 = time.time()
@@ -1475,8 +1555,7 @@ class SettlementProcessor:
 
         self.df.sort_index(inplace=True)
 
-
-
+        return grid_lcoe, self.df['NewDist'], pd.DataFrame(grid_investment), pd.DataFrame(grid_capacity)
 
     def elec_extension(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
                        grid_connect_limit, new_investment, new_capacity, auto_intensification=0, prioritization=0,
@@ -2211,13 +2290,18 @@ class SettlementProcessor:
                     (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] != 99),
                     SET_LCOE_SA_PV + "{}".format(year)] = 99
 
-        self.choose_minimum_off_grid_tech(year, mg_hydro_calc, techs, tech_codes)
+        self.choose_minimum_off_grid_tech(year, mg_hydro_calc, techs, tech_codes,
+                                          sa_diesel_investment, sa_pv_investment, mg_diesel_investment,
+                                          mg_pv_hybrid_investment, mg_wind_investment, mg_hydro_investment
+                                          )
 
         return sa_diesel_investment, sa_diesel_capacity, sa_pv_investment, sa_pv_capacity, mg_diesel_investment, \
             mg_diesel_capacity, mg_pv_hybrid_investment, mg_pv_hybrid_capacity, mg_wind_investment, mg_wind_capacity, \
             mg_hydro_investment, mg_hydro_capacity
 
-    def choose_minimum_off_grid_tech(self, year, mg_hydro_calc, techs, tech_codes):
+    def choose_minimum_off_grid_tech(self, year, mg_hydro_calc, techs, tech_codes,
+                                     sa_diesel_investment, sa_pv_investment, mg_diesel_investment,
+                                     mg_pv_hybrid_investment, mg_wind_investment, mg_hydro_investment):
         """Choose minimum LCOE off-grid technology
 
         First step determines the off-grid technology with minimum LCOE
@@ -2252,6 +2336,22 @@ class SettlementProcessor:
         for i in range(len(off_grid_techs)):
             self.df.loc[self.df[SET_MIN_OFFGRID + "{}".format(year)] == off_grid_techs[i],
                         SET_MIN_OFFGRID_CODE + "{}".format(year)] = off_grid_tech_codes[i]
+
+        sa_diesel = pd.DataFrame(np.where(self.df[SET_MIN_OFFGRID_CODE + "{}".format(year)] == 2, 1, 0))
+        sa_pv = pd.DataFrame(np.where(self.df[SET_MIN_OFFGRID_CODE + "{}".format(year)] == 3, 1, 0))
+        mg_diesel = pd.DataFrame(np.where(self.df[SET_MIN_OFFGRID_CODE + "{}".format(year)] == 4, 1, 0))
+        mg_pv_hybrid = pd.DataFrame(np.where(self.df[SET_MIN_OFFGRID_CODE + "{}".format(year)] == 5, 1, 0))
+        mg_wind = pd.DataFrame(np.where(self.df[SET_MIN_OFFGRID_CODE + "{}".format(year)] == 6, 1, 0))
+        mg_hydro = pd.DataFrame(np.where(self.df[SET_MIN_OFFGRID_CODE + "{}".format(year)] == 7, 1, 0))
+
+        logging.info('Calculate investment cost')
+
+        self.df['OffGridInvestmentCost' + "{}".format(year)] = 0.
+        self.df['OffGridInvestmentCost' + "{}".format(year)] = sa_diesel * sa_diesel_investment + \
+                                                           sa_pv * sa_pv_investment + \
+                                                           mg_diesel * mg_diesel_investment + \
+                                                           mg_pv_hybrid * mg_pv_hybrid_investment + \
+                                                           mg_wind * mg_wind_investment + mg_hydro * mg_hydro_investment
 
     def limit_hydro_usage(self, mg_hydro_calc, year):
         # A df with all hydro-power sites, to ensure that they aren't assigned more capacity than is available
@@ -2356,6 +2456,75 @@ class SettlementProcessor:
                                                         mg_pv_hybrid * mg_pv_hybrid_capacity + \
                                                         mg_wind * mg_wind_capacity + mg_hydro * mg_hydro_capacity
 
+    def pre_selection(self, eleclimit, year, time_step, prioritization, auto_densification=0):
+
+        choice = int(prioritization)
+        self.df['PreSelection' + "{}".format(year)] = 0
+
+        # Calculate the total population targeted to be electrified
+        elec_target_pop = eleclimit * self.df[SET_POP + "{}".format(year)].sum()
+
+        # Adding a column with investment/connection
+        self.df[SET_INVEST_PER_CONNECTION + "{}".format(year)] = \
+            self.df['OffGridInvestmentCost' + "{}".format(year)] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]
+
+        if eleclimit == 1:
+            # If electrification target rate is 100%, set all settlements to electrified
+            self.df['PreSelection' + "{}".format(year)] = 1
+            elecrate = 1
+
+        elif choice == 2:
+            # Prioritize already electrified settlements, then intensification, then lowest investment per connection
+
+            self.df['Intensification'] = np.where(self.df[SET_MV_DIST_PLANNED] < auto_densification, 1, 0)
+
+            self.df.sort_values(by=[SET_ELEC_FINAL_CODE + "{}".format(year - time_step),
+                                    'Intensification',
+                                    SET_INVEST_PER_CONNECTION + "{}".format(year)], inplace=True)
+
+            self.df['Elec_POP'] = self.df[SET_ELEC_POP + "{}".format(year - time_step)] + self.df[
+                SET_NEW_CONNECTIONS + "{}".format(year)] * self.df[SET_NUM_PEOPLE_PER_HH]
+            cumulative_pop = self.df['Elec_POP'].cumsum()
+            # cumulative_pop = self.df[SET_POP + "{}".format(year)].cumsum()
+
+            self.df['PreSelection' + "{}".format(year)] = np.where(cumulative_pop < elec_target_pop, 1, 0)
+
+            del self.df['Intensification']
+
+
+            self.df.sort_index(inplace=True)
+
+            # Ensure already electrified settlements remain electrified
+            self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] < 99),
+                        'PreSelection' + "{}".format(year)] = 1
+
+            elecrate = self.df.loc[self.df['PreSelection' + "{}".format(year)] == 1, 'Elec_POP'].sum() / \
+                self.df[SET_POP + "{}".format(year)].sum()
+
+            del self.df['Elec_POP']
+
+        elif choice == 5:
+            # Prioritize already electrified settlements first, then lowest investment per connection
+            self.df.sort_values(by=[SET_ELEC_FINAL_CODE + "{}".format(year - time_step),
+                                    SET_INVEST_PER_CONNECTION + "{}".format(year)], inplace=True)
+
+            self.df['Elec_POP'] = self.df[SET_ELEC_POP + "{}".format(year - time_step)] + self.df[
+                SET_NEW_CONNECTIONS + "{}".format(year)] * self.df[SET_NUM_PEOPLE_PER_HH]
+            cumulative_pop = self.df['Elec_POP'].cumsum()
+
+            self.df['PreSelection' + "{}".format(year)] = np.where(cumulative_pop < elec_target_pop, 1, 0)
+
+            self.df.sort_index(inplace=True)
+
+            # Ensure already electrified settlements remain electrified
+            self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] < 99),
+                        'PreSelection' + "{}".format(year)] = 1
+
+            del self.df['Elec_POP']
+
+        del self.df[SET_INVEST_PER_CONNECTION + "{}".format(year)]
+
+
     def apply_limitations(self, eleclimit, year, time_step, prioritization, auto_densification=0):
 
         logging.info('Determine electrification limits')
@@ -2365,7 +2534,7 @@ class SettlementProcessor:
         # Calculate the total population targeted to be electrified
         elec_target_pop = eleclimit * self.df[SET_POP + "{}".format(year)].sum()
 
-        # Adding a column with investment/capita
+        # Adding a column with investment/connection
         self.df[SET_INVEST_PER_CONNECTION + "{}".format(year)] = \
             self.df[SET_INVESTMENT_COST + "{}".format(year)] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]
 
@@ -2382,6 +2551,8 @@ class SettlementProcessor:
             self.df.sort_values(by=[SET_ELEC_FINAL_CODE + "{}".format(year - time_step),
                                     'Intensification',
                                     SET_INVEST_PER_CONNECTION + "{}".format(year)], inplace=True)
+
+            self.df.sort_values(by=['PreSelection' + "{}".format(year)], inplace=True, ascending=False) # ToDo does this work?
 
             self.df['Elec_POP'] = self.df[SET_ELEC_POP + "{}".format(year - time_step)] + self.df[
                 SET_NEW_CONNECTIONS + "{}".format(year)] * self.df[SET_NUM_PEOPLE_PER_HH]
@@ -2405,6 +2576,8 @@ class SettlementProcessor:
             # Prioritize already electrified settlements first, then lowest investment per connection
             self.df.sort_values(by=[SET_ELEC_FINAL_CODE + "{}".format(year - time_step),
                                     SET_INVEST_PER_CONNECTION + "{}".format(year)], inplace=True)
+
+            self.df.sort_values(by=['PreSelection' + "{}".format(year)], inplace=True, ascending=False)  # ToDo does this work?
 
             self.df['Elec_POP'] = self.df[SET_ELEC_POP + "{}".format(year - time_step)] + self.df[
                 SET_NEW_CONNECTIONS + "{}".format(year)] * self.df[SET_NUM_PEOPLE_PER_HH]
@@ -2440,7 +2613,7 @@ class SettlementProcessor:
         if eleclimit == 1:
             self.df[SET_ELEC_POP + "{}".format(year)] = self.df[SET_POP + "{}".format(year)]
         else:
-            self.df[SET_ELEC_POP + "{}".format(year)] = 0
+            self.df[SET_ELEC_POP + "{}".format(year)] = 0.
             self.df.loc[self.df[SET_LIMIT + "{}".format(year)] == 1, SET_ELEC_POP + "{}".format(year)] = self.df[
                 'Elec_POP']
             del self.df['Elec_POP']
@@ -2451,11 +2624,9 @@ class SettlementProcessor:
 
         # ToDo is there a need to check also total elec_limit with densification???
 
-        new_grid_conn = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 1) |
-            (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 2), SET_NEW_CONNECTIONS + "{}".format(year)].sum()
+        new_grid_conn = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] <= 2), SET_NEW_CONNECTIONS + "{}".format(year)].sum()
 
-        new_grid_cap = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 1) |
-            (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 2), SET_NEW_CAPACITY + "{}".format(year)].sum()
+        new_grid_cap = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] <= 2), SET_NEW_CAPACITY + "{}".format(year)].sum()
 
         connect_factor = grid_connect_limit / new_grid_conn
         cap_factor = grid_cap_limit / new_grid_cap
