@@ -1,11 +1,18 @@
 import logging
+import time
 from math import log, pi
 from typing import Dict
 import scipy.spatial
 from scipy.optimize import differential_evolution, Bounds
 
-from hybrids import *
+try:
+    from hybrids import *
+except:
+    from onsset.hybrids import *
 
+import geojson
+from shapely.geometry import shape, Point
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -767,9 +774,9 @@ class SettlementProcessor:
                    SET_ELEVATION, SET_SLOPE, SET_LAND_COVER, SET_SUBSTATION_DIST, SET_HV_DIST_CURRENT,
                    SET_HV_DIST_PLANNED, SET_MV_DIST_CURRENT, SET_MV_DIST_PLANNED, SET_ROAD_DIST, SET_X_DEG, SET_Y_DEG,
                    SET_DIST_TO_TRANS, SET_HYDRO_DIST, SET_HYDRO, SET_HYDRO_FID, SET_URBAN,
-                   SET_AGRI_DEMAND, SET_HEALTH_DEMAND, SET_EDU_DEMAND, SET_COMMERCIAL_DEMAND, SET_ELEC_ORDER,
+                   SET_AGRI_DEMAND, SET_HEALTH_DEMAND, SET_EDU_DEMAND, SET_COMMERCIAL_DEMAND,
                    'ResidentialDemandTierCustom', 'ResidentialDemandTier1', 'ResidentialDemandTier2',
-                   'ResidentialDemandTier3', 'ResidentialDemandTier4', 'ResidentialDemandTier5']
+                   'ResidentialDemandTier3', 'ResidentialDemandTier4', 'ResidentialDemandTier5']  # SET_ELEC_ORDER
 
         for column in columns:
             self.df[column] = pd.to_numeric(self.df[column], errors='coerce')
@@ -1325,7 +1332,7 @@ class SettlementProcessor:
 
         return pd.Series(grid_investment), pd.Series(grid_capacity), grid_capacity_limit, grid_connect_limit
 
-    def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc):
+    def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc, max_intensification_cost):
 
         # Calculate max extension for each settlement to be connected to the grid at
         # a lower cost than least-cost off-grid alternative
@@ -1371,17 +1378,69 @@ class SettlementProcessor:
         self.df['MaxDist' + '{}'.format(year)] = max_dist
         self.df['GridCapacityRequired'] = peak_load / grid_calc.capacity_factor
         self.df['GridCapacityRequired' + '{}'.format(year)] = peak_load / grid_calc.capacity_factor
-        self.df['MaxIntensificationDist'] = (1800 - filter_investment[0] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) / (cost_per_km / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) # Todo
+        self.df['MaxIntensificationDist'] = (max_intensification_cost - filter_investment[0] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) / (cost_per_km / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) # Todo
+
+    @staticmethod
+    def start_extension_points(mv_lines_path):
+        # Function to interpolate points along a LineString
+
+        data = gpd.read_file(mv_lines_path)
+        data = data.to_crs(3395)
+
+        def interpolate_points(line, distance):
+            num_vertices = int(line.length / distance) + 1
+            points = [line.interpolate(i * distance) for i in range(num_vertices)]
+            return points
+
+        # Function to convert a coordinate to Point geometry
+        def coords_to_points(coords):
+            return [Point(coord) for coord in coords]
+
+        # Define the target distance for interpolation (500 meters)
+        distance = 500  # in meters
+
+        # Define lists to collect all x and y coordinates
+        x_coords = []
+        y_coords = []
+
+        # Iterate through features in the GeoJSON
+        for line in data['geometry'].explode(index_parts=False):
+            #if geom.geom_type == 'MultiLineString':
+            #    for line in geom:
+                    # Add original vertices
+                    for point in coords_to_points(line.coords):
+                        x_coords.append(point.x)
+                        y_coords.append(point.y)
+
+                    # Interpolate points if the line is longer than 750 meters
+                    if line.length > 750:
+                        for point in interpolate_points(line, distance):
+                            x_coords.append(point.x)
+                            y_coords.append(point.y)
+
+        # Convert lists to numpy arrays
+        x_array = np.array(x_coords)
+        y_array = np.array(y_coords)
+
+        return x_array, y_array
 
     @staticmethod
     @njit
-    def extension_dist_and_check(unelectrified, x_coordinates, y_coordinates,
-                                 x_unelectrified, y_unelectrified, max_dist, pre_selection,
-                                 new_connections, grid_connect_limit,
-                                 new_capacity, new_capacity_limit,
-                                 auto_intensification, max_intensification_dist):
+    def extension_dist_and_check(unelectrified,
+                                 x_coordinates,
+                                 y_coordinates,
+                                 x_unelectrified,
+                                 y_unelectrified,
+                                 max_dist,
+                                 new_connections,
+                                 grid_connect_limit,
+                                 new_capacity,
+                                 new_capacity_limit,
+                                 ):
         newly_electrified = []
         newly_electrified_dist = []
+        new_electrified_x = []
+        new_electrified_y = []
         new_mv_line_coords = []
         remain_unelectrified = []
 
@@ -1395,22 +1454,26 @@ class SettlementProcessor:
             y = y_unelectrified[i]
 
             dist = np.sqrt((x_coordinates - x) ** 2 + (y_coordinates - y) ** 2)
-            min_dist = min(dist)
+            min_dist = min(dist) / 1000
             min_index = np.argmin(dist)
 
-            if (min_dist < max_dist[i]) & (min_dist < 50) & (pre_selection[i] == 1) & (max_intensification_dist[i] < auto_intensification):
+            if (min_dist < max_dist[i]) & (min_dist < 50):
                 newly_electrified.append(id)
                 x_coordinates = np.append(x_coordinates, x)
                 y_coordinates = np.append(y_coordinates, y)
+
                 newly_electrified_dist.append(min_dist)
                 new_mv_line_coords.append((x, y, x_coordinates[min_index], y_coordinates[min_index]))
+
+                new_electrified_x.append(x)
+                new_electrified_y.append(y)
 
                 grid_connect_limit -= new_connections[i]
                 new_capacity_limit -= new_capacity[i]
 
-                if min_dist > 0.006:
+                if min_dist > 0.75:
                     # Calculate the number of intermediate points
-                    number_of_points = int(min_dist / 0.006)
+                    number_of_points = int(min_dist / 0.5)
 
                     # Generate the intermediate points
                     for i in range(1, number_of_points + 1):
@@ -1418,15 +1481,82 @@ class SettlementProcessor:
                         y_i = y + i * (y_coordinates[min_index] - y) / (number_of_points + 1)
                         x_coordinates = np.append(x_coordinates, x_i)
                         y_coordinates = np.append(y_coordinates, y_i)
+
+                        new_electrified_x.append(x_i)
+                        new_electrified_y.append(y_i)
             else:
                 remain_unelectrified.append(id)
 
         return newly_electrified, newly_electrified_dist, new_mv_line_coords, \
-            remain_unelectrified, x_coordinates, y_coordinates, grid_connect_limit, new_capacity_limit
+            x_coordinates, y_coordinates, grid_connect_limit, new_capacity_limit, new_electrified_x, new_electrified_y
+
+    def add_xy_3395(self):
+        # Earth's radius in meters (WGS 84)
+        R = 6378137.0
+        # Flattening factor of the Earth
+        f = 1 / 298.257223563
+        # Scale factor for EPSG:3395
+        k0 = 1.0
+
+        # Conversion constants for EPSG:3395
+        def deg_to_rad(degrees):
+            return degrees * (np.pi / 180.0)
+
+        def lon_to_x(lon):
+            return R * deg_to_rad(lon)
+
+        def lat_to_y(lat):
+            lat_rad = deg_to_rad(lat)
+            e = np.sqrt(f * (2 - f))  # Eccentricity
+            sin_lat = np.sin(lat_rad)
+            return R * np.log(np.tan(np.pi / 4 + lat_rad / 2) * ((1 - e * sin_lat) / (1 + e * sin_lat)) ** (e / 2))
+
+        self.df['X'] = lon_to_x(self.df[SET_X_DEG])
+        self.df['Y'] = lat_to_y(self.df[SET_Y_DEG])
+
+    @staticmethod
+    def create_index_grid(min_x, max_x, min_y, max_y, cell_size):
+        # Determine the grid dimensions
+
+        grid_width = int(np.ceil((max_x - min_x) / cell_size))
+        grid_height = int(np.ceil((max_y - min_y) / cell_size))
+
+        # Initialize the grid
+        grid = [[[] for _ in range(grid_height)] for _ in range(grid_width)]
+
+        return grid, grid_width, grid_height
+
+    @staticmethod
+    def fill_index_grid(x_coords, y_coords, data, grid, cell_size, min_x, min_y):
+
+        for i in range(len(x_coords)):
+            x, y = x_coords[i], y_coords[i]
+            col = int((x - min_x) // cell_size)
+            row = int((y - min_y) // cell_size)
+            grid[col][row].append(data[i])
+
+        return grid
 
     def elec_extension_numba(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
-                       grid_connect_limit, new_investment, new_capacity, auto_intensification=0, prioritization=0,
-                       threshold=999999999):
+                             grid_connect_limit, new_investment, new_capacity, x_coordinates, y_coordinates,
+                             auto_intensification=0, prioritization=0, threshold=999999999):
+
+        cell_size = 10000
+
+        min_x = min(min(x_coordinates), min(self.df['X']))
+        max_x = max(max(x_coordinates), max(self.df['X']))
+        min_y = min(min(y_coordinates), min(self.df['Y']))
+        max_y = max(max(y_coordinates), max(self.df['Y']))
+
+        # Create empty grid
+        grid_x, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+        grid_y, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+
+        # Fill the grid with data
+        existing_grid_x = self.fill_index_grid(x_coordinates, y_coordinates, x_coordinates, grid_x, cell_size, min_x, min_y)
+        existing_grid_y = self.fill_index_grid(x_coordinates, y_coordinates, y_coordinates, grid_y, cell_size, min_x, min_y)
+
+        print('Starting', time.ctime())
 
         prio = int(prioritization)
         self.df['NearRoads'] = np.where(self.df[SET_ROAD_DIST] < 0.5, 0, 1)
@@ -1443,21 +1573,8 @@ class SettlementProcessor:
             elecorder = self.df[SET_ELEC_ORDER].copy(deep=True)
         else:
             elecorder = self.df[SET_ELEC_ORDER + "{}".format(year - time_step)].copy(deep=True)
-        grid_penalty_ratio = self.df[SET_GRID_PENALTY].copy(deep=True)
-        min_code_lcoes = self.df[SET_MIN_OFFGRID_LCOE + "{}".format(year)].copy(deep=True)
-        new_lcoes = self.df[SET_LCOE_GRID + "{}".format(year)].copy(deep=True)
         cell_path_real = self.df[SET_MV_CONNECT_DIST].copy(deep=True)
         cell_path_adjusted = list(np.zeros(len(prev_code)).tolist())
-        mv_planned = self.df[SET_MV_DIST_PLANNED].copy(deep=True)
-
-        # Start by identifying which settlements are grid-connected already
-        electrified = self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year-time_step)] < 3].index.tolist()
-        unelectrified = self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year-time_step)] >= 3].index.tolist()
-
-        x_coordinates = np.array(self.df.loc[electrified][SET_X_DEG])
-        y_coordinates = np.array(self.df.loc[electrified][SET_Y_DEG])
-
-        t1 = time.time()
 
         new_electrified = []
         new_dists = []
@@ -1467,61 +1584,236 @@ class SettlementProcessor:
         i = 0
 
         while iterate:
+            prior_len = len(new_electrified)
+            unelectrified = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
+                                        (self.df['MaxDist' + "{}".format(year)] >= 0) &
+                                        (self.df['PreSelection' + "{}".format(year)] == 1) &
+                                        (self.df[SET_MV_DIST_PLANNED] < 50)].index.tolist()
 
-            newly_electrified, newly_electrified_dists, new_mv_line_coords, \
-                unelectrified, x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit = \
-                self.extension_dist_and_check(unelectrified,
-                                              x_coordinates,
-                                              y_coordinates,
-                                              np.array(self.df.loc[unelectrified][SET_X_DEG]),
-                                              np.array(self.df.loc[unelectrified][SET_Y_DEG]),
-                                              np.array(self.df.loc[unelectrified]['MaxDist' + "{}".format(year)]),
-                                              np.array(self.df.loc[unelectrified]['PreSelection' + "{}".format(year)]),
-                                              np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
-                                              grid_connect_limit,
-                                              np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
-                                              grid_capacity_limit,
-                                              999999999,
-                                              np.array(self.df.loc[unelectrified][SET_MV_DIST_CURRENT]))
+            unelectrified = [x for x in unelectrified if x not in new_electrified]
 
-            new_lines += new_mv_line_coords
-            new_electrified += newly_electrified
-            new_dists += newly_electrified_dists
+            unelec_grid_x, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_y, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_id, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_max_dist, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_connections, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_capacity, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+
+            # ToDo first run everything > 10 km
+            # ToDo how to do with sorting, index, etc.???
+
+            unelec_x = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                            np.array(self.df.loc[unelectrified]['Y']),
+                                            np.array(self.df.loc[unelectrified]['X']),
+                                            unelec_grid_x, cell_size, min_x, min_y)
+            unelec_y = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                            np.array(self.df.loc[unelectrified]['Y']),
+                                            np.array(self.df.loc[unelectrified]['Y']),
+                                            unelec_grid_y, cell_size, min_x, min_y)
+            unelec_id = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                             np.array(self.df.loc[unelectrified]['Y']),
+                                             np.array(self.df.loc[unelectrified].index.tolist()),
+                                             unelec_grid_id, cell_size, min_x, min_y)
+            unelec_max_dist = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                                   np.array(self.df.loc[unelectrified]['Y']),
+                                                   np.array(self.df.loc[unelectrified]['MaxDist' + "{}".format(year)]),
+                                                   unelec_grid_max_dist, cell_size, min_x, min_y)
+            unelec_connections = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                                      np.array(self.df.loc[unelectrified]['Y']),
+                                                      np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                                      unelec_grid_connections,
+                                                      cell_size, min_x, min_y)
+            unelec_capacity = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                                   np.array(self.df.loc[unelectrified]['Y']),
+                                                   np.array(self.df.loc[unelectrified]['GridCapacityRequired' + "{}".format(year)]),
+                                                   unelec_grid_capacity, cell_size, min_x, min_y)
+
+            for ii in range(grid_width):
+                for jj in range(grid_height):
+                    x_current = []
+                    y_current = []
+
+                    x_unelec = unelec_x[ii][jj]
+                    y_unelec = unelec_y[ii][jj]
+                    id_unelec = unelec_id[ii][jj]
+                    max_dist_unelec = unelec_max_dist[ii][jj]
+                    conn_unelec = unelec_connections[ii][jj]
+                    capacity_unelec = unelec_capacity[ii][jj]
+
+                    for k in [-1, 0, 1]:
+                        for l in [-1, 0, 1]:
+                            col = ii + k
+                            row = jj + l
+                            if (col >= 0) & (row >= 0) & (col < grid_width) & (row < grid_height):
+                                x_current += existing_grid_x[col][row]
+                                y_current += existing_grid_y[col][row]
+
+                    if (len(x_unelec) > 0) & (len(x_current) > 0):
+
+                        newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+                            x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit,\
+                            new_elec_x, new_elec_y = \
+                            self.extension_dist_and_check(np.array(id_unelec),
+                                                          np.array(x_current), #x_coordinates,
+                                                          np.array(y_current), #y_coordinates,
+                                                          np.array(x_unelec), #np.array(self.df.loc[unelectrified]['X']),
+                                                          np.array(y_unelec), #np.array(self.df.loc[unelectrified]['Y']),
+                                                          np.array(max_dist_unelec),
+                                                          np.array(conn_unelec),
+                                                          grid_connect_limit,
+                                                          np.array(capacity_unelec),
+                                                          grid_capacity_limit,
+                                                          )
+
+                        new_lines += new_mv_line_coords
+                        new_electrified += newly_electrified
+                        new_dists += newly_electrified_dists
+
+                        existing_grid_x = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_x, existing_grid_x, cell_size, min_x, min_y)
+                        existing_grid_y = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_y, existing_grid_y, cell_size, min_x, min_y)
+
+            print(len(new_electrified) - prior_len, time.ctime())
 
             i += 1
-            if len(newly_electrified) == 0:
+            if (len(new_electrified) - prior_len) == 0:
                 iterate = False
 
         # Intensification round
 
-        iterate = True
-        i = 0
+
+        if len(unelectrified) > 0:
+            iterate = True
+            i = 0
 
         while iterate:
 
-            newly_electrified, newly_electrified_dists, new_mv_line_coords, \
-                unelectrified, x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit = \
-                self.extension_dist_and_check(unelectrified,
-                                              x_coordinates,
-                                              y_coordinates,
-                                              np.array(self.df.loc[unelectrified][SET_X_DEG]),
-                                              np.array(self.df.loc[unelectrified][SET_Y_DEG]),
-                                              np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
-                                              np.array(self.df.loc[unelectrified]['PreSelection' + "{}".format(year)]),
-                                              np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
-                                              grid_connect_limit,
-                                              np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
-                                              grid_capacity_limit,
-                                              auto_intensification,
-                                              np.array(self.df.loc[unelectrified][SET_MV_DIST_CURRENT]))
+            prior_len = len(new_electrified)
 
-            new_lines += new_mv_line_coords
-            new_electrified += newly_electrified
-            new_dists += newly_electrified_dists
+            self.df['MaxIntensificationDist'] = self.df['MaxIntensificationDist'].fillna(-1)  # ToDo check why
+            unelectrified = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
+                                        (self.df['MaxIntensificationDist'] >= 0) &
+                                        (self.df['PreSelection' + "{}".format(year)] == 1) &
+                                        (self.df[SET_MV_DIST_PLANNED] < auto_intensification)].index.tolist()
+
+            unelectrified = [x for x in unelectrified if x not in new_electrified]
+
+            unelec_grid_x, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_y, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_id, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            unelec_grid_max_dist, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y,cell_size)
+            unelec_grid_connections, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y,cell_size)
+            unelec_grid_capacity, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y,cell_size)
+
+            # ToDo first run everything > 10 km
+            # ToDo how to do with sorting, index, etc.???
+
+            unelec_x = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                            np.array(self.df.loc[unelectrified]['Y']),
+                                            np.array(self.df.loc[unelectrified]['X']),
+                                            unelec_grid_x, cell_size, min_x, min_y)
+            unelec_y = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                            np.array(self.df.loc[unelectrified]['Y']),
+                                            np.array(self.df.loc[unelectrified]['Y']),
+                                            unelec_grid_y, cell_size, min_x, min_y)
+            unelec_id = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                             np.array(self.df.loc[unelectrified]['Y']),
+                                             np.array(self.df.loc[unelectrified].index.tolist()),
+                                             unelec_grid_id, cell_size, min_x, min_y)
+            unelec_max_dist = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                                   np.array(self.df.loc[unelectrified]['Y']),
+                                                   np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
+                                                   unelec_grid_max_dist, cell_size, min_x, min_y)
+            unelec_connections = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                                      np.array(self.df.loc[unelectrified]['Y']),
+                                                      np.array(self.df.loc[unelectrified][
+                                                                   SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                                      unelec_grid_connections,
+                                                      cell_size, min_x, min_y)
+            unelec_capacity = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                                                   np.array(self.df.loc[unelectrified]['Y']),
+                                                   np.array(self.df.loc[unelectrified][
+                                                                'GridCapacityRequired' + "{}".format(year)]),
+                                                   unelec_grid_capacity, cell_size, min_x, min_y)
+
+            for ii in range(grid_width):
+                for jj in range(grid_height):
+                    x_current = []
+                    y_current = []
+
+                    x_unelec = unelec_x[ii][jj]
+                    y_unelec = unelec_y[ii][jj]
+                    id_unelec = unelec_id[ii][jj]
+                    max_dist_unelec = unelec_max_dist[ii][jj]
+                    conn_unelec = unelec_connections[ii][jj]
+                    capacity_unelec = unelec_capacity[ii][jj]
+
+                    for k in [-1, 0, 1]:
+                        for l in [-1, 0, 1]:
+                            col = ii + k
+                            row = jj + l
+                            if (col >= 0) & (row >= 0) & (col < grid_width) & (row < grid_height):
+                                x_current += existing_grid_x[col][row]
+                                y_current += existing_grid_y[col][row]
+
+                    if (len(x_unelec) > 0) & (len(x_current) > 0):
+                        newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+                            x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit, \
+                            new_elec_x, new_elec_y = \
+                            self.extension_dist_and_check(np.array(id_unelec),
+                                                          np.array(x_current),  # x_coordinates,
+                                                          np.array(y_current),  # y_coordinates,
+                                                          np.array(x_unelec),
+                                                          # np.array(self.df.loc[unelectrified]['X']),
+                                                          np.array(y_unelec),
+                                                          # np.array(self.df.loc[unelectrified]['Y']),
+                                                          np.array(max_dist_unelec),
+                                                          np.array(conn_unelec),
+                                                          grid_connect_limit,
+                                                          np.array(capacity_unelec),
+                                                          grid_capacity_limit,
+                                                          )
+
+                        new_lines += new_mv_line_coords
+                        new_electrified += newly_electrified
+                        new_dists += newly_electrified_dists
+
+                        existing_grid_x = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_x, existing_grid_x,
+                                                               cell_size, min_x, min_y)
+                        existing_grid_y = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_y, existing_grid_y,
+                                                               cell_size, min_x, min_y)
+
+            print(len(new_electrified) - prior_len, time.ctime())
 
             i += 1
-            if len(newly_electrified) == 0:
+            if (len(new_electrified) - prior_len) == 0:
                 iterate = False
+
+            # newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+            #     x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit,\
+            #     new_elec_x, new_elec_y = \
+            #     self.extension_dist_and_check(unelectrified,
+            #                                   x_coordinates,
+            #                                   y_coordinates,
+            #                                   np.array(self.df.loc[unelectrified]['X']),
+            #                                   np.array(self.df.loc[unelectrified]['Y']),
+            #                                   np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
+            #                                   np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
+            #                                   grid_connect_limit,
+            #                                   np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
+            #                                   grid_capacity_limit,
+            #                                   )
+            #
+            # print(len(newly_electrified), time.ctime())
+            #
+            # new_lines += new_mv_line_coords
+            # new_electrified += newly_electrified
+            # new_dists += newly_electrified_dists
+            #
+            # i += 1
+            # if len(newly_electrified) == 0:
+            #     iterate = False
+            # if len(unelectrified) == 0:
+            #     iterate = False
 
         features = []
 
@@ -1546,16 +1838,11 @@ class SettlementProcessor:
         # Create a FeatureCollection
         feature_collection = geojson.FeatureCollection(features)
 
-        # Save to a GeoJSON file
-        with open(r'C:\Users\andre\OneDrive\Dokument\GitHub\SEforALL-onsset\test_data\output\new_mv_lines{}.geojson'.format(year), 'w') as f: # Todo
-            geojson.dump(feature_collection, f)
-
-        t2 = time.time()
-        print(t2-t1)
-
         self.df.sort_index(inplace=True)
 
-        return grid_lcoe, self.df['NewDist'], pd.DataFrame(grid_investment), pd.DataFrame(grid_capacity)
+        print('Finishing', time.ctime())
+
+        return grid_lcoe, self.df['NewDist'], pd.DataFrame(grid_investment), pd.DataFrame(grid_capacity), x_coordinates, y_coordinates, feature_collection
 
     def elec_extension(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
                        grid_connect_limit, new_investment, new_capacity, auto_intensification=0, prioritization=0,
@@ -2409,7 +2696,7 @@ class SettlementProcessor:
             self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 6,
                         SET_MIN_OVERALL + "{}".format(year)] = SET_LCOE_MG_WIND + "{}".format(year)
 
-        # Ensure settlements within intensification distance are grid-connected
+        # Ensure settlements within intensification distance are grid-connected # ToDo change to all settlements where grid_lcoe < 99 ?
         if (prio == 2) or (prio == 4):
             self.df.loc[(self.df[SET_MV_DIST_PLANNED] < auto_intensification) &
                         (self.df[SET_LCOE_GRID + "{}".format(year)] != 99),
