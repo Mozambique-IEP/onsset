@@ -163,11 +163,11 @@ class Technology:
 
     @classmethod
     def set_default_values(cls, base_year, start_year, end_year, discount_rate, hv_line_type=69, hv_line_cost=53000,
-                           mv_line_type=33, mv_line_amperage_limit=8.0, mv_line_cost=15000, lv_line_type=0.240,
+                           mv_line_type=33, mv_line_amperage_limit=8.0, mv_line_cost=7000, lv_line_type=0.240,
                            lv_line_cost=4250, lv_line_max_length=0.5, service_transf_type=50, service_transf_cost=4250,
                            max_nodes_per_serv_trans=300, mv_lv_sub_station_type=400, mv_lv_sub_station_cost=10000,
-                           mv_mv_sub_station_cost=10000, hv_lv_sub_station_type=1000, hv_lv_sub_station_cost=25000,
-                           hv_mv_sub_station_cost=25000, power_factor=0.9, load_moment=9643):
+                           hv_mv_sub_station_cost=25000, hv_mv_substation_type=10000, power_factor=0.9,
+                           load_moment=9643):
         """Initialises the class with parameter values common to all Technologies
         """
         cls.base_year = base_year
@@ -189,9 +189,7 @@ class Technology:
         cls.max_nodes_per_serv_trans = max_nodes_per_serv_trans  # max number of nodes served by a service transformer
         cls.mv_lv_sub_station_type = mv_lv_sub_station_type  # kVa
         cls.mv_lv_sub_station_cost = mv_lv_sub_station_cost  # $/unit
-        cls.mv_mv_sub_station_cost = mv_mv_sub_station_cost  # $/unit
-        cls.hv_lv_sub_station_type = hv_lv_sub_station_type  # kVa
-        cls.hv_lv_sub_station_cost = hv_lv_sub_station_cost  # $/unit
+        cls.hv_mv_substation_type = hv_mv_substation_type  # kVA
         cls.hv_mv_sub_station_cost = hv_mv_sub_station_cost  # $/unit
         cls.power_factor = power_factor
         cls.load_moment = load_moment  # for 50mm aluminum conductor under 5% voltage drop (kW m)
@@ -253,7 +251,7 @@ class Technology:
         else:
             energy_per_cell = np.maximum(energy_per_cell, 0.000000000001)
 
-        grid_penalty_ratio = np.maximum(1, grid_penalty_ratio)
+        grid_penalty_ratio = 1
 
         generation_per_year, peak_load, td_investment_cost = self.td_network_cost(people,
                                                                                   new_connections,
@@ -388,8 +386,6 @@ class Technology:
         mv_km = 0
         hv_km = 0
         no_of_hv_mv_subs = 0
-        no_of_mv_mv_subs = 0
-        no_of_hv_lv_subs = 0
         no_of_mv_lv_subs = 0
 
         if not self.standalone:
@@ -399,44 +395,21 @@ class Technology:
 
             mv_amperage = self.mv_lv_sub_station_type / self.mv_line_type
             no_of_mv_lines = np.ceil(peak_load / (mv_amperage * self.mv_line_type))
-            hv_amperage = self.hv_lv_sub_station_type / self.hv_line_type
+            hv_amperage = self.hv_mv_substation_type / self.hv_line_type
             no_of_hv_lines = np.ceil(peak_load / (hv_amperage * self.hv_line_type))
 
-            if additional_transformer > 0:
-                mv_km = 0
-                hv_km = additional_mv_line_length * no_of_hv_lines
-            else:
-                mv_km = np.where((peak_load <= max_mv_load) & (additional_mv_line_length < 50),
-                                 additional_mv_line_length * no_of_mv_lines,
-                                 0)
+            mv_km = np.where((peak_load <= max_mv_load) & (additional_mv_line_length < 50), # ToDo max_dist
+                             additional_mv_line_length * no_of_mv_lines,
+                             0)
 
-                hv_km = np.where((peak_load <= max_mv_load) & (additional_mv_line_length < 50),
-                                 0,
-                                 additional_mv_line_length * no_of_hv_lines)
+            hv_km = np.where((peak_load <= max_mv_load) & (additional_mv_line_length < 50), # ToDo max_dist
+                             0,
+                             additional_mv_line_length * no_of_hv_lines)
 
-            no_of_hv_mv_subs = np.where(mv_distribution & (hv_km > 0),
-                                        np.ceil(peak_load / self.mv_lv_sub_station_type),
-                                        0)
-            no_of_mv_mv_subs = np.where(mv_distribution & (mv_km > 0),
-                                        np.ceil(peak_load / self.mv_lv_sub_station_type),
-                                        0)
-            no_of_hv_lv_subs = np.where(mv_distribution,
-                                        0,
-                                        np.where(hv_km > 0, np.ceil(peak_load / self.hv_lv_sub_station_type), 0))
-            if self.mini_grid:
-                no_of_mv_lv_subs = np.where(mv_km > 0,
-                                            np.ceil(peak_load / self.mv_lv_sub_station_type),
-                                            0)
-            else:
-                no_of_mv_lv_subs = np.where(mv_distribution,
-                                            np.where(hv_km == 0, np.where(
-                                                mv_km == 0, np.ceil(peak_load / self.mv_lv_sub_station_type), 0), 0),
-                                            np.ceil(peak_load / self.mv_lv_sub_station_type))
-                no_of_mv_lv_subs = np.ceil(peak_load / self.mv_lv_sub_station_type)  # ToDo review if the above is correct (returns no MV/LV subs sometimes)
+            if additional_transformer:
+                no_of_hv_mv_subs = np.ceil(peak_load / self.hv_mv_substation_type) # ToDo id hv_km
 
-            no_of_hv_mv_subs += additional_transformer  # to connect the MV line to the HV grid
-
-        return hv_km, mv_km, no_of_hv_mv_subs, no_of_mv_mv_subs, no_of_hv_lv_subs, no_of_mv_lv_subs
+        return hv_km, mv_km, no_of_hv_mv_subs, no_of_mv_lv_subs
 
     def distribution_network(self, people, energy_per_cell, num_people_per_hh, grid_cell_area,
                              productive_nodes=0):
@@ -562,24 +535,20 @@ class Technology:
 
         # Then calculate the transmission network (HV or MV lines plus transformers) using the same methodology
         hv_lines_total_length_total, mv_lines_connection_length_total, no_of_hv_mv_substation_total, \
-            no_of_mv_mv_substation_total, no_of_hv_lv_substation_total, no_of_mv_lv_substation_total = \
+            no_of_mv_lv_substation_total = \
             self.transmission_network(peak_load_total, additional_mv_line_length, additional_transformer,
                                       mv_distribution=mv_distribution)
 
         hv_lines_total_length_existing, mv_lines_connection_length_existing, no_of_hv_mv_substation_existing, \
-            no_of_mv_mv_substation_existing, no_of_hv_lv_substation_existing, no_of_mv_lv_substation_existing = \
+            no_of_mv_lv_substation_existing = \
             self.transmission_network(peak_load_existing, additional_mv_line_length, additional_transformer,
                                       mv_distribution=mv_distribution)
 
         hv_lines_total_length_additional = np.maximum(hv_lines_total_length_total - hv_lines_total_length_existing, 0)
         mv_lines_connection_length_additional = \
             np.maximum(mv_lines_connection_length_total - mv_lines_connection_length_existing, 0)
-        no_of_hv_lv_substation_additional = \
-            np.maximum(no_of_hv_lv_substation_total - no_of_hv_lv_substation_existing, 0)
         no_of_hv_mv_substation_additional = \
             np.maximum(no_of_hv_mv_substation_total - no_of_hv_mv_substation_existing, 0)
-        no_of_mv_mv_substation_additional = \
-            np.maximum(no_of_mv_mv_substation_total - no_of_mv_mv_substation_existing, 0)
         no_of_mv_lv_substation_additional = \
             np.maximum(no_of_mv_lv_substation_total - no_of_mv_lv_substation_existing, 0)
 
@@ -591,7 +560,7 @@ class Technology:
         mv_distribution = np.where(mv_lines_distribution_length_new > 0, True, False)
 
         hv_lines_total_length_new, mv_lines_connection_length_new, no_of_hv_mv_substation_new, \
-            no_of_mv_mv_substation_new, no_of_hv_lv_substation_new, no_of_mv_lv_substation_new = \
+            no_of_mv_lv_substation_new, = \
             self.transmission_network(peak_load_new, additional_mv_line_length, additional_transformer,
                                       mv_distribution=mv_distribution)
 
@@ -619,17 +588,9 @@ class Technology:
                                total_nodes_additional,
                                total_nodes_new)
 
-        no_of_hv_lv_substation = np.where((prev_code != 3) & (prev_code != 99),
-                                          no_of_hv_lv_substation_additional,
-                                          no_of_hv_lv_substation_new)
-
         no_of_hv_mv_substation = np.where((prev_code != 3) & (prev_code != 99),
                                           no_of_hv_mv_substation_additional,
                                           no_of_hv_mv_substation_new)
-
-        no_of_mv_mv_substation = np.where((prev_code != 3) & (prev_code != 99),
-                                          no_of_mv_mv_substation_additional,
-                                          no_of_mv_mv_substation_new)
 
         no_of_mv_lv_substation = np.where((prev_code != 3) & (prev_code != 99),
                                           no_of_mv_lv_substation_additional,
@@ -651,9 +612,7 @@ class Technology:
                               mv_lines_distribution_length * self.mv_line_cost +
                               num_transformers * self.service_transf_cost +
                               total_nodes * self.connection_cost_per_hh +
-                              no_of_hv_lv_substation * self.hv_lv_sub_station_cost +
                               no_of_hv_mv_substation * self.hv_mv_sub_station_cost +
-                              no_of_mv_mv_substation * self.mv_mv_sub_station_cost +
                               no_of_mv_lv_substation * self.mv_lv_sub_station_cost) * penalty
 
         return generation_per_year, peak_load, td_investment_cost
@@ -762,6 +721,58 @@ class SettlementProcessor:
                                                sa_diesel_cost, mg_diesel_cost, year)
 
         self.df = self.df.join(diesel_cost)
+
+    def conditioning(self):
+
+        columns = ['GridCellArea', 'Country', 'ElecPop', 'IsUrban', 'NightLights', 'Pop', 'id',
+                   'GHI', 'TravelHours', 'WindVel', 'ResidentialDemandTierCustom',
+                   'CurrentHVLineDist',
+                   'Admin_1', 'SubstationDist',
+                   'PlannedHVLineDist', 'PlannedMVLineDist', 'CurrentMVLineDist', 'TransformerDist', 'Hydropower',
+                   'HydropowerDist', 'HydropowerFID', 'PerCapitaDemand', 'HealthDemand', 'EducationDemand',
+                   'AgriDemand',
+                   'CommercialDemand', 'RoadDist', 'MGDist', 'X_deg', 'Y_deg']
+
+        self.df['ElectrificationOrder'] = 0
+
+        # 'Conflict', 'ElectrificationOrder', 'ResidentialDemandTier1', 'ResidentialDemandTier2', 'ResidentialDemandTier3', 'ResidentialDemandTier4', 'ResidentialDemandTier5', 'Commercial_Multiplier', 'ResidentialDemandTierCustomUrban', 'ResidentialDemandTierCustomRural',
+
+        for c in columns:
+            if c in self.df.columns:
+                if self.df[c].isnull().values.any():
+                    if c in ['LandCover', 'Country', 'ResidentialDemandTierCustom', 'ResidentialDemandTierCustomUrban',
+                             'ResidentialDemandTierCustomRural', 'PerCapitaDemand', 'ResidentialDemandTier1',
+                             'ResidentialDemandTier2',
+                             'ResidentialDemandTier3', 'ResidentialDemandTier4', 'ResidentialDemandTier5']:
+                        self.df[c].fillna(self.df[c].mode()[0], inplace=True)
+                        print(c + " contains null values. Filling with most common")
+
+                    elif c in ['GHI', 'TravelHours', 'WindVel']:
+                        self.df[c].fillna(self.df[c].mean(), inplace=True)
+                        print(c + " contains null values. Filling with mean")
+
+                    elif c in ['NightLights', 'ElecPop', 'IsUrban', 'Elevation', 'Slope', 'Hydropower', 'HealthDemand',
+                               'EducationDemand', 'AgriDemand', 'CommercialDemand', 'Conflict', 'ElectrificationOrder',
+                               'RoadDist']:
+                        self.df[c].fillna(0, inplace=True)
+                        print(c + " contains null values. Filling with 0")
+
+                    elif c in ['HydropowerDist', 'HydropowerFID']:
+                        self.df[c].fillna(9999, inplace=True)
+                        print(c + " contains null values. Filling with 9999")
+
+                    elif c in ['GridCellArea', 'Pop', 'id', 'Admin_1', 'PlannedHVLineDist', 'SubstationDist',
+                               'PlannedMVLineDist', 'CurrentMVLineDist', 'TransformerDist', 'X_deg', 'Y_deg']:
+                        print(c + " contains null values. Check the input file!")
+
+            else:
+                if c in ['PlannedHVLineDist', 'SubstationDist', 'PlannedMVLineDist', 'CurrentMVLineDist',
+                         'TransformerDist', 'HydropowerDist', 'HydropowerFID']:
+                    print(c + ' is missing from the csv file. Filling with 9999 values')
+                    self.df[c] = 9999
+                else:
+                    print(c + ' is missing from the csv file. Filling with 0 values')
+                    self.df[c] = 0
 
     def condition_df(self):
         """
@@ -964,7 +975,7 @@ class SettlementProcessor:
         pop_ratio = pop_actual / self.df[SET_POP].sum()
 
         # Use above ratio to calibrate the population in a new column
-        self.df[SET_POP_CALIB] = self.df.apply(lambda row: row[SET_POP] * pop_ratio, axis=1)
+        self.df[SET_POP_CALIB] = self.df[SET_POP] * pop_ratio
         pop_modelled = self.df[SET_POP_CALIB].sum()
 
         self.df[SET_ELEC_POP_CALIB] = self.df[SET_ELEC_POP] * pop_ratio
@@ -1007,12 +1018,15 @@ class SettlementProcessor:
         yearly_rural_growth_rate = rural_growth ** (1 / project_life)
 
         for year in years_of_analysis:
-            self.df[SET_POP + "{}".format(year)] = \
-                self.df.apply(lambda row: row[SET_POP_CALIB] * (yearly_urban_growth_rate ** (year - start_year))
-                if row[SET_URBAN] > 1
-                else row[SET_POP_CALIB] * (yearly_rural_growth_rate ** (year - start_year)), axis=1)
+            self.df.loc[self.df[SET_URBAN] > 1, SET_POP + "{}".format(year)] = self.df[SET_POP_CALIB] * (yearly_urban_growth_rate ** (year - start_year))
+            self.df.loc[self.df[SET_URBAN] == 0, SET_POP + "{}".format(year)] = self.df[SET_POP_CALIB] * (yearly_rural_growth_rate ** (year - start_year))
 
-        self.df[SET_POP + "{}".format(start_year)] = self.df.apply(lambda row: row[SET_POP_CALIB], axis=1)
+            # self.df[SET_POP + "{}".format(year)] = \
+            #     self.df.apply(lambda row: row[SET_POP_CALIB] * (yearly_urban_growth_rate ** (year - start_year))
+            #     if row[SET_URBAN] > 1
+            #     else row[SET_POP_CALIB] * (yearly_rural_growth_rate ** (year - start_year)), axis=1)
+
+        self.df[SET_POP + "{}".format(start_year)] = self.df[SET_POP_CALIB]
 
     def calibrate_grid_elec_current(self, grid_elec_current, grid_elec_current_urban, grid_elec_current_rural,
                                     start_year, min_night_lights=0, min_pop=50, max_transformer_dist=2, max_mv_dist=2,
@@ -1259,10 +1273,8 @@ class SettlementProcessor:
 
     def mg_elec_current(self,
                         start_year,
-                        mg_dist=1,
-                        # Distance from existing mini-grids to consider settlements connected to the mini-grid
-                        mg_ntl=-1,
-                        # Night-time light threshold to consider a settlement mini-grid electrified, in combination with mg_dist. -1 means NTL is not required, 0 means all settlements with NTL within dist is electrified, and any higher value means a higher cut-off threshold
+                        mg_dist=1, # Distance from existing mini-grids to consider settlements connected to the mini-grid
+                        mg_ntl=-1, # Night-time light threshold to consider a settlement mini-grid electrified, in combination with mg_dist. -1 means NTL is not required, 0 means all settlements with NTL within dist is electrified, and any higher value means a higher cut-off threshold
                         min_pop=400  ### Settlement population above which we can assume that it could be electrified
                         ):
 
@@ -1363,7 +1375,7 @@ class SettlementProcessor:
         max_mv_load = grid_calc.mv_line_amperage_limit * grid_calc.mv_line_type * hv_to_mv_lines
         mv_amperage = grid_calc.mv_lv_sub_station_type / grid_calc.mv_line_type
         no_of_mv_lines = np.ceil(peak_load / (mv_amperage * grid_calc.mv_line_type))
-        hv_amperage = grid_calc.hv_lv_sub_station_type / grid_calc.hv_line_type
+        hv_amperage = grid_calc.hv_mv_substation_type / grid_calc.hv_line_type
         no_of_hv_lines = np.ceil(peak_load / (hv_amperage * grid_calc.hv_line_type))
 
         mv_lines = np.where((peak_load <= max_mv_load), no_of_mv_lines, 0)
@@ -1439,10 +1451,7 @@ class SettlementProcessor:
                                  ):
         newly_electrified = []
         newly_electrified_dist = []
-        new_electrified_x = []
-        new_electrified_y = []
         new_mv_line_coords = []
-        remain_unelectrified = []
 
         for i in range(len(unelectrified)):
 
@@ -1457,16 +1466,13 @@ class SettlementProcessor:
             min_dist = min(dist) / 1000
             min_index = np.argmin(dist)
 
-            if (min_dist < max_dist[i]) & (min_dist < 50):
+            if min_dist < max_dist[i]:
                 newly_electrified.append(id)
                 x_coordinates = np.append(x_coordinates, x)
                 y_coordinates = np.append(y_coordinates, y)
 
                 newly_electrified_dist.append(min_dist)
                 new_mv_line_coords.append((x, y, x_coordinates[min_index], y_coordinates[min_index]))
-
-                new_electrified_x.append(x)
-                new_electrified_y.append(y)
 
                 grid_connect_limit -= new_connections[i]
                 new_capacity_limit -= new_capacity[i]
@@ -1482,13 +1488,12 @@ class SettlementProcessor:
                         x_coordinates = np.append(x_coordinates, x_i)
                         y_coordinates = np.append(y_coordinates, y_i)
 
-                        new_electrified_x.append(x_i)
-                        new_electrified_y.append(y_i)
             else:
-                remain_unelectrified.append(id)
+                pass
+                #remain_unelectrified.append(id)
 
         return newly_electrified, newly_electrified_dist, new_mv_line_coords, \
-            x_coordinates, y_coordinates, grid_connect_limit, new_capacity_limit, new_electrified_x, new_electrified_y
+            x_coordinates, y_coordinates, grid_connect_limit, new_capacity_limit
 
     def add_xy_3395(self):
         # Earth's radius in meters (WGS 84)
@@ -1514,49 +1519,11 @@ class SettlementProcessor:
         self.df['X'] = lon_to_x(self.df[SET_X_DEG])
         self.df['Y'] = lat_to_y(self.df[SET_Y_DEG])
 
-    @staticmethod
-    def create_index_grid(min_x, max_x, min_y, max_y, cell_size):
-        # Determine the grid dimensions
-
-        grid_width = int(np.ceil((max_x - min_x) / cell_size))
-        grid_height = int(np.ceil((max_y - min_y) / cell_size))
-
-        # Initialize the grid
-        grid = [[[] for _ in range(grid_height)] for _ in range(grid_width)]
-
-        return grid, grid_width, grid_height
-
-    @staticmethod
-    def fill_index_grid(x_coords, y_coords, data, grid, cell_size, min_x, min_y):
-
-        for i in range(len(x_coords)):
-            x, y = x_coords[i], y_coords[i]
-            col = int((x - min_x) // cell_size)
-            row = int((y - min_y) // cell_size)
-            grid[col][row].append(data[i])
-
-        return grid
-
     def elec_extension_numba(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
-                             grid_connect_limit, new_investment, new_capacity, x_coordinates, y_coordinates,
+                             grid_connect_limit, x_coordinates, y_coordinates,
                              auto_intensification=0, prioritization=0, threshold=999999999):
 
-        cell_size = 10000
-
-        min_x = min(min(x_coordinates), min(self.df['X']))
-        max_x = max(max(x_coordinates), max(self.df['X']))
-        min_y = min(min(y_coordinates), min(self.df['Y']))
-        max_y = max(max(y_coordinates), max(self.df['Y']))
-
-        # Create empty grid
-        grid_x, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-        grid_y, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-
-        # Fill the grid with data
-        existing_grid_x = self.fill_index_grid(x_coordinates, y_coordinates, x_coordinates, grid_x, cell_size, min_x, min_y)
-        existing_grid_y = self.fill_index_grid(x_coordinates, y_coordinates, y_coordinates, grid_y, cell_size, min_x, min_y)
-
-        print('Starting', time.ctime())
+        #print('Starting', time.ctime())
 
         prio = int(prioritization)
         self.df['NearRoads'] = np.where(self.df[SET_ROAD_DIST] < 0.5, 0, 1)
@@ -1569,12 +1536,12 @@ class SettlementProcessor:
         self.df.loc[self.df[SET_MV_DIST_CURRENT] > max_dist, 'MaxDist' + "{}".format(year)] = -1
 
         prev_code = self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)].copy(deep=True)
-        if year - time_step == start_year:
-            elecorder = self.df[SET_ELEC_ORDER].copy(deep=True)
-        else:
-            elecorder = self.df[SET_ELEC_ORDER + "{}".format(year - time_step)].copy(deep=True)
-        cell_path_real = self.df[SET_MV_CONNECT_DIST].copy(deep=True)
-        cell_path_adjusted = list(np.zeros(len(prev_code)).tolist())
+        #if year - time_step == start_year:
+        #    elecorder = self.df[SET_ELEC_ORDER].copy(deep=True)
+        #else:
+        #    elecorder = self.df[SET_ELEC_ORDER + "{}".format(year - time_step)].copy(deep=True)
+        #cell_path_real = self.df[SET_MV_CONNECT_DIST].copy(deep=True)
+        #cell_path_adjusted = list(np.zeros(len(prev_code)).tolist())
 
         new_electrified = []
         new_dists = []
@@ -1584,102 +1551,50 @@ class SettlementProcessor:
         i = 0
 
         while iterate:
-            prior_len = len(new_electrified)
+
             unelectrified = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
                                         (self.df['MaxDist' + "{}".format(year)] >= 0) &
                                         (self.df['PreSelection' + "{}".format(year)] == 1) &
-                                        (self.df[SET_MV_DIST_PLANNED] < 50)].index.tolist()
+                                        (self.df[SET_HV_DIST_PLANNED] < max_dist)].index.tolist()
 
             unelectrified = [x for x in unelectrified if x not in new_electrified]
 
-            unelec_grid_x, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_y, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_id, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_max_dist, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_connections, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_capacity, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
+            if len(unelectrified) > 0:
 
-            # ToDo first run everything > 10 km
-            # ToDo how to do with sorting, index, etc.???
-
-            unelec_x = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                            np.array(self.df.loc[unelectrified]['Y']),
-                                            np.array(self.df.loc[unelectrified]['X']),
-                                            unelec_grid_x, cell_size, min_x, min_y)
-            unelec_y = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                            np.array(self.df.loc[unelectrified]['Y']),
-                                            np.array(self.df.loc[unelectrified]['Y']),
-                                            unelec_grid_y, cell_size, min_x, min_y)
-            unelec_id = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                             np.array(self.df.loc[unelectrified]['Y']),
-                                             np.array(self.df.loc[unelectrified].index.tolist()),
-                                             unelec_grid_id, cell_size, min_x, min_y)
-            unelec_max_dist = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
+                newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+                     x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit = \
+                     self.extension_dist_and_check(unelectrified,
+                                                   x_coordinates,
+                                                   y_coordinates,
+                                                   np.array(self.df.loc[unelectrified]['X']),
                                                    np.array(self.df.loc[unelectrified]['Y']),
                                                    np.array(self.df.loc[unelectrified]['MaxDist' + "{}".format(year)]),
-                                                   unelec_grid_max_dist, cell_size, min_x, min_y)
-            unelec_connections = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                                      np.array(self.df.loc[unelectrified]['Y']),
-                                                      np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
-                                                      unelec_grid_connections,
-                                                      cell_size, min_x, min_y)
-            unelec_capacity = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                                   np.array(self.df.loc[unelectrified]['Y']),
-                                                   np.array(self.df.loc[unelectrified]['GridCapacityRequired' + "{}".format(year)]),
-                                                   unelec_grid_capacity, cell_size, min_x, min_y)
+                                                   np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                                   grid_connect_limit,
+                                                   np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
+                                                   grid_capacity_limit,
+                                                   )
 
-            for ii in range(grid_width):
-                for jj in range(grid_height):
-                    x_current = []
-                    y_current = []
+                new_lines += new_mv_line_coords
+                new_electrified += newly_electrified
+                new_dists += newly_electrified_dists
 
-                    x_unelec = unelec_x[ii][jj]
-                    y_unelec = unelec_y[ii][jj]
-                    id_unelec = unelec_id[ii][jj]
-                    max_dist_unelec = unelec_max_dist[ii][jj]
-                    conn_unelec = unelec_connections[ii][jj]
-                    capacity_unelec = unelec_capacity[ii][jj]
-
-                    for k in [-1, 0, 1]:
-                        for l in [-1, 0, 1]:
-                            col = ii + k
-                            row = jj + l
-                            if (col >= 0) & (row >= 0) & (col < grid_width) & (row < grid_height):
-                                x_current += existing_grid_x[col][row]
-                                y_current += existing_grid_y[col][row]
-
-                    if (len(x_unelec) > 0) & (len(x_current) > 0):
-
-                        newly_electrified, newly_electrified_dists, new_mv_line_coords, \
-                            x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit,\
-                            new_elec_x, new_elec_y = \
-                            self.extension_dist_and_check(np.array(id_unelec),
-                                                          np.array(x_current), #x_coordinates,
-                                                          np.array(y_current), #y_coordinates,
-                                                          np.array(x_unelec), #np.array(self.df.loc[unelectrified]['X']),
-                                                          np.array(y_unelec), #np.array(self.df.loc[unelectrified]['Y']),
-                                                          np.array(max_dist_unelec),
-                                                          np.array(conn_unelec),
-                                                          grid_connect_limit,
-                                                          np.array(capacity_unelec),
-                                                          grid_capacity_limit,
-                                                          )
-
-                        new_lines += new_mv_line_coords
-                        new_electrified += newly_electrified
-                        new_dists += newly_electrified_dists
-
-                        existing_grid_x = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_x, existing_grid_x, cell_size, min_x, min_y)
-                        existing_grid_y = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_y, existing_grid_y, cell_size, min_x, min_y)
-
-            print(len(new_electrified) - prior_len, time.ctime())
+                if len(newly_electrified) > 0:
+                    print(len(newly_electrified), ' new settlements connected to the grid', time.ctime())
 
             i += 1
-            if (len(new_electrified) - prior_len) == 0:
+            if len(newly_electrified) == 0:
+                iterate = False
+            if len(unelectrified) == 0:
                 iterate = False
 
         # Intensification round
-
+        self.df['MaxIntensificationDist'] = self.df['MaxIntensificationDist'].fillna(-1)  # ToDo check why
+        unelectrified = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
+                                    (self.df['MaxIntensificationDist'] >= 0) &
+                                    (self.df['PreSelection' + "{}".format(year)] == 1) &
+                                    (self.df[SET_MV_DIST_PLANNED] < auto_intensification)].index.tolist()
+        unelectrified = [x for x in unelectrified if x not in new_electrified]
 
         if len(unelectrified) > 0:
             iterate = True
@@ -1687,9 +1602,6 @@ class SettlementProcessor:
 
         while iterate:
 
-            prior_len = len(new_electrified)
-
-            self.df['MaxIntensificationDist'] = self.df['MaxIntensificationDist'].fillna(-1)  # ToDo check why
             unelectrified = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
                                         (self.df['MaxIntensificationDist'] >= 0) &
                                         (self.df['PreSelection' + "{}".format(year)] == 1) &
@@ -1697,123 +1609,32 @@ class SettlementProcessor:
 
             unelectrified = [x for x in unelectrified if x not in new_electrified]
 
-            unelec_grid_x, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_y, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_id, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y, cell_size)
-            unelec_grid_max_dist, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y,cell_size)
-            unelec_grid_connections, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y,cell_size)
-            unelec_grid_capacity, grid_width, grid_height = self.create_index_grid(min_x, max_x, min_y, max_y,cell_size)
+            newly_electrified, newly_electrified_dists, new_mv_line_coords, \
+                x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit = \
+                self.extension_dist_and_check(unelectrified,
+                                              x_coordinates,
+                                              y_coordinates,
+                                              np.array(self.df.loc[unelectrified]['X']),
+                                              np.array(self.df.loc[unelectrified]['Y']),
+                                              np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
+                                              np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                              grid_connect_limit,
+                                              np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
+                                              grid_capacity_limit,
+                                              )
 
-            # ToDo first run everything > 10 km
-            # ToDo how to do with sorting, index, etc.???
+            if len(newly_electrified) > 0:
+                print(len(newly_electrified), ' new settlements connected to the grid', time.ctime())
 
-            unelec_x = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                            np.array(self.df.loc[unelectrified]['Y']),
-                                            np.array(self.df.loc[unelectrified]['X']),
-                                            unelec_grid_x, cell_size, min_x, min_y)
-            unelec_y = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                            np.array(self.df.loc[unelectrified]['Y']),
-                                            np.array(self.df.loc[unelectrified]['Y']),
-                                            unelec_grid_y, cell_size, min_x, min_y)
-            unelec_id = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                             np.array(self.df.loc[unelectrified]['Y']),
-                                             np.array(self.df.loc[unelectrified].index.tolist()),
-                                             unelec_grid_id, cell_size, min_x, min_y)
-            unelec_max_dist = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                                   np.array(self.df.loc[unelectrified]['Y']),
-                                                   np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
-                                                   unelec_grid_max_dist, cell_size, min_x, min_y)
-            unelec_connections = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                                      np.array(self.df.loc[unelectrified]['Y']),
-                                                      np.array(self.df.loc[unelectrified][
-                                                                   SET_NEW_CONNECTIONS + "{}".format(year)]),
-                                                      unelec_grid_connections,
-                                                      cell_size, min_x, min_y)
-            unelec_capacity = self.fill_index_grid(np.array(self.df.loc[unelectrified]['X']),
-                                                   np.array(self.df.loc[unelectrified]['Y']),
-                                                   np.array(self.df.loc[unelectrified][
-                                                                'GridCapacityRequired' + "{}".format(year)]),
-                                                   unelec_grid_capacity, cell_size, min_x, min_y)
-
-            for ii in range(grid_width):
-                for jj in range(grid_height):
-                    x_current = []
-                    y_current = []
-
-                    x_unelec = unelec_x[ii][jj]
-                    y_unelec = unelec_y[ii][jj]
-                    id_unelec = unelec_id[ii][jj]
-                    max_dist_unelec = unelec_max_dist[ii][jj]
-                    conn_unelec = unelec_connections[ii][jj]
-                    capacity_unelec = unelec_capacity[ii][jj]
-
-                    for k in [-1, 0, 1]:
-                        for l in [-1, 0, 1]:
-                            col = ii + k
-                            row = jj + l
-                            if (col >= 0) & (row >= 0) & (col < grid_width) & (row < grid_height):
-                                x_current += existing_grid_x[col][row]
-                                y_current += existing_grid_y[col][row]
-
-                    if (len(x_unelec) > 0) & (len(x_current) > 0):
-                        newly_electrified, newly_electrified_dists, new_mv_line_coords, \
-                            x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit, \
-                            new_elec_x, new_elec_y = \
-                            self.extension_dist_and_check(np.array(id_unelec),
-                                                          np.array(x_current),  # x_coordinates,
-                                                          np.array(y_current),  # y_coordinates,
-                                                          np.array(x_unelec),
-                                                          # np.array(self.df.loc[unelectrified]['X']),
-                                                          np.array(y_unelec),
-                                                          # np.array(self.df.loc[unelectrified]['Y']),
-                                                          np.array(max_dist_unelec),
-                                                          np.array(conn_unelec),
-                                                          grid_connect_limit,
-                                                          np.array(capacity_unelec),
-                                                          grid_capacity_limit,
-                                                          )
-
-                        new_lines += new_mv_line_coords
-                        new_electrified += newly_electrified
-                        new_dists += newly_electrified_dists
-
-                        existing_grid_x = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_x, existing_grid_x,
-                                                               cell_size, min_x, min_y)
-                        existing_grid_y = self.fill_index_grid(new_elec_x, new_elec_y, new_elec_y, existing_grid_y,
-                                                               cell_size, min_x, min_y)
-
-            print(len(new_electrified) - prior_len, time.ctime())
+            new_lines += new_mv_line_coords
+            new_electrified += newly_electrified
+            new_dists += newly_electrified_dists
 
             i += 1
-            if (len(new_electrified) - prior_len) == 0:
+            if len(newly_electrified) == 0:
                 iterate = False
-
-            # newly_electrified, newly_electrified_dists, new_mv_line_coords, \
-            #     x_coordinates, y_coordinates, grid_connect_limit, grid_capacity_limit,\
-            #     new_elec_x, new_elec_y = \
-            #     self.extension_dist_and_check(unelectrified,
-            #                                   x_coordinates,
-            #                                   y_coordinates,
-            #                                   np.array(self.df.loc[unelectrified]['X']),
-            #                                   np.array(self.df.loc[unelectrified]['Y']),
-            #                                   np.array(self.df.loc[unelectrified]['MaxIntensificationDist']),
-            #                                   np.array(self.df.loc[unelectrified][SET_NEW_CONNECTIONS + "{}".format(year)]),
-            #                                   grid_connect_limit,
-            #                                   np.array(self.df.loc[unelectrified]['GridCapacityRequired' + '{}'.format(year)]),
-            #                                   grid_capacity_limit,
-            #                                   )
-            #
-            # print(len(newly_electrified), time.ctime())
-            #
-            # new_lines += new_mv_line_coords
-            # new_electrified += newly_electrified
-            # new_dists += newly_electrified_dists
-            #
-            # i += 1
-            # if len(newly_electrified) == 0:
-            #     iterate = False
-            # if len(unelectrified) == 0:
-            #     iterate = False
+            if len(unelectrified) == 0:
+                iterate = False
 
         features = []
 
@@ -1840,7 +1661,7 @@ class SettlementProcessor:
 
         self.df.sort_index(inplace=True)
 
-        print('Finishing', time.ctime())
+        #print('Finishing', time.ctime())
 
         return grid_lcoe, self.df['NewDist'], pd.DataFrame(grid_investment), pd.DataFrame(grid_capacity), x_coordinates, y_coordinates, feature_collection
 
@@ -2463,9 +2284,8 @@ class SettlementProcessor:
 
         return hybrid_lcoe, hybrid_capacity, hybrid_investment
 
-    def calculate_off_grid_lcoes(self, mg_hydro_calc, mg_wind_calc, sa_pv_calc, mg_diesel_calc,
-                                 sa_diesel_calc, mg_pv_hybrid_calc, year, end_year, time_step, techs, tech_codes,
-                                 diesel_techs=0):
+    def calculate_off_grid_lcoes(self, mg_hydro_calc, mg_wind_calc, sa_pv_calc,  mg_pv_hybrid_calc, year, end_year, time_step, techs, tech_codes,
+                                 diesel_techs=0): # mg_diesel_calc, sa_diesel_calc,
         """
         Calculate the LCOEs for all off-grid technologies
 
@@ -2524,41 +2344,41 @@ class SettlementProcessor:
                                   grid_cell_area=self.df[SET_GRID_CELL_AREA],
                                   capacity_factor=self.df[SET_WINDCF])
 
-        if diesel_techs == 0:
-            self.df[SET_LCOE_MG_DIESEL + "{}".format(year)] = 99
-            self.df[SET_LCOE_SA_DIESEL + "{}".format(year)] = 99
-            sa_diesel_investment = mg_pv_hybrid_investment * 0
-            mg_diesel_investment = mg_pv_hybrid_investment * 0
-            sa_diesel_capacity = mg_pv_hybrid_capacity * 0
-            mg_diesel_capacity = mg_pv_hybrid_capacity * 0
-        else:
-            logging.info('Calculate minigrid diesel LCOE')
-            self.df[SET_LCOE_MG_DIESEL + "{}".format(year)], mg_diesel_investment, mg_diesel_capacity = \
-                mg_diesel_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
-                                        start_year=year - time_step,
-                                        end_year=end_year,
-                                        people=self.df[SET_POP + "{}".format(year)],
-                                        new_connections=self.df[SET_NEW_CONNECTIONS + "{}".format(year)],
-                                        total_energy_per_cell=self.df[SET_TOTAL_ENERGY_PER_CELL],
-                                        prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
-                                        num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
-                                        grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                        fuel_cost=self.df[SET_MG_DIESEL_FUEL + "{}".format(year)],
-                                        capacity_factor=mg_diesel_calc.capacity_factor)
-
-            logging.info('Calculate standalone diesel LCOE')
-            self.df[SET_LCOE_SA_DIESEL + "{}".format(year)], sa_diesel_investment, sa_diesel_capacity = \
-                sa_diesel_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
-                                        start_year=year - time_step,
-                                        end_year=end_year,
-                                        people=self.df[SET_POP + "{}".format(year)],
-                                        new_connections=self.df[SET_NEW_CONNECTIONS + "{}".format(year)],
-                                        total_energy_per_cell=self.df[SET_TOTAL_ENERGY_PER_CELL],
-                                        prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
-                                        num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
-                                        grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                        fuel_cost=self.df[SET_SA_DIESEL_FUEL + "{}".format(year)],
-                                        capacity_factor=sa_diesel_calc.capacity_factor)
+        #if diesel_techs == 0:
+        self.df[SET_LCOE_MG_DIESEL + "{}".format(year)] = 99
+        self.df[SET_LCOE_SA_DIESEL + "{}".format(year)] = 99
+        sa_diesel_investment = mg_pv_hybrid_investment * 0
+        mg_diesel_investment = mg_pv_hybrid_investment * 0
+        sa_diesel_capacity = mg_pv_hybrid_capacity * 0
+        mg_diesel_capacity = mg_pv_hybrid_capacity * 0
+        # else:
+        #     logging.info('Calculate minigrid diesel LCOE')
+        #     self.df[SET_LCOE_MG_DIESEL + "{}".format(year)], mg_diesel_investment, mg_diesel_capacity = \
+        #         mg_diesel_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
+        #                                 start_year=year - time_step,
+        #                                 end_year=end_year,
+        #                                 people=self.df[SET_POP + "{}".format(year)],
+        #                                 new_connections=self.df[SET_NEW_CONNECTIONS + "{}".format(year)],
+        #                                 total_energy_per_cell=self.df[SET_TOTAL_ENERGY_PER_CELL],
+        #                                 prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
+        #                                 num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
+        #                                 grid_cell_area=self.df[SET_GRID_CELL_AREA],
+        #                                 fuel_cost=self.df[SET_MG_DIESEL_FUEL + "{}".format(year)],
+        #                                 capacity_factor=mg_diesel_calc.capacity_factor)
+        #
+        #     logging.info('Calculate standalone diesel LCOE')
+        #     self.df[SET_LCOE_SA_DIESEL + "{}".format(year)], sa_diesel_investment, sa_diesel_capacity = \
+        #         sa_diesel_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
+        #                                 start_year=year - time_step,
+        #                                 end_year=end_year,
+        #                                 people=self.df[SET_POP + "{}".format(year)],
+        #                                 new_connections=self.df[SET_NEW_CONNECTIONS + "{}".format(year)],
+        #                                 total_energy_per_cell=self.df[SET_TOTAL_ENERGY_PER_CELL],
+        #                                 prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
+        #                                 num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
+        #                                 grid_cell_area=self.df[SET_GRID_CELL_AREA],
+        #                                 fuel_cost=self.df[SET_SA_DIESEL_FUEL + "{}".format(year)],
+        #                                 capacity_factor=sa_diesel_calc.capacity_factor)
 
         logging.info('Calculate standalone PV LCOE')
         self.df[SET_LCOE_SA_PV + "{}".format(year)], sa_pv_investment, sa_pv_capacity = \
@@ -2812,7 +2632,7 @@ class SettlementProcessor:
         del self.df[SET_INVEST_PER_CONNECTION + "{}".format(year)]
 
 
-    def apply_limitations(self, eleclimit, year, time_step, prioritization, auto_densification=0):
+    def apply_limitations(self, eleclimit, year, time_step, prioritization=2, auto_densification=0):
 
         logging.info('Determine electrification limits')
         choice = int(prioritization)
@@ -2921,12 +2741,12 @@ class SettlementProcessor:
         factor = min(connect_factor, cap_factor)
 
         if factor < 1:
-            if final:
-                if connect_factor < 1:
-                    print('Maximum number of grid connections were not enough to meet densification demand, results have more grid connections than the limit')
-                if cap_factor < 1:
-                    print('Maximum new grid generation capacity was not enough to meet densification demand, results have more grid capacity than the limit')
-            else:
+            #if final:
+            #    if connect_factor < 1:
+            #        print('Maximum number of grid connections were not enough to meet densification demand, results have more grid connections than the limit')
+            #    if cap_factor < 1:
+            #        print('Maximum new grid generation capacity was not enough to meet densification demand, results have more grid capacity than the limit')
+            if not final:
                 self.df.loc[self.df[SET_MIN_OVERALL + "{}".format(year)] == SET_LCOE_GRID + "{}".format(year), SET_NEW_CONNECTIONS + "{}".format(year)] *= factor
                 self.df.loc[self.df[SET_MIN_OVERALL + "{}".format(year)] == SET_LCOE_GRID + "{}".format(year), SET_NEW_CAPACITY + "{}".format(year)] *= factor
                 self.df.loc[self.df[SET_MIN_OVERALL + "{}".format(year)] == SET_LCOE_GRID + "{}".format(year), SET_INVESTMENT_COST + "{}".format(year)] *= factor

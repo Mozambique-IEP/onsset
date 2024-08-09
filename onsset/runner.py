@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+import geopandas as gpd
 
 import geojson
 import pandas as pd
@@ -132,7 +133,6 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             time_steps[yearsofanalysis[year]] = yearsofanalysis[year] - start_years[year]
 
         onsseter = SettlementProcessor(calibrated_csv_path)
-
 
         x_coordinates, y_coordinates = onsseter.start_extension_points(r'C:\Users\andre\OneDrive\Dokument\GitHub\SEforALL-onsset\test_data\MV_lines_guess.geojson')
         onsseter.add_xy_3395()
@@ -369,8 +369,6 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                               time_step,
                                               grid_cap_gen_limit,
                                               grid_connect_limit,
-                                              grid_investment,
-                                              grid_capacity,
                                               x_coordinates,
                                               y_coordinates,
                                               auto_intensification=auto_intensification,
@@ -404,6 +402,10 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             # Save to a GeoJSON file
             with open(os.path.join(results_folder, 'new_mv_lines_{}_{}.geojson'.format(scenario, year)), 'w') as f: # ToDo
                 geojson.dump(new_lines_geojson[year], f)
+            gdf = gpd.read_file(os.path.join(results_folder, 'new_mv_lines_{}_{}.geojson'.format(scenario, year)))
+            gdf = gdf.set_crs(3395, allow_override=True)
+            gdf = gdf.to_crs(4326)
+            gdf.to_file(os.path.join(results_folder, 'new_mv_lines_{}_{}.geojson'.format(scenario, year)))
 
         for i in range(len(onsseter.df.columns)):
             if onsseter.df.iloc[:, i].dtype == 'float64':
