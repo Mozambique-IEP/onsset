@@ -136,6 +136,7 @@ class Technology:
                  hybrid_investment=0,
                  hybrid_capacity=0,
                  hybrid_fuel=0,
+                 discount_rate=0.08
                  ):  # percentage
 
         self.distribution_losses = distribution_losses
@@ -160,9 +161,10 @@ class Technology:
         self.hybrid_investment = hybrid_investment
         self.hybrid_capacity = hybrid_capacity
         self.hybrid_fuel = hybrid_fuel
+        self.discount_rate = discount_rate
 
     @classmethod
-    def set_default_values(cls, base_year, start_year, end_year, discount_rate, hv_line_type=69, hv_line_cost=53000,
+    def set_default_values(cls, base_year, start_year, end_year, hv_line_type=69, hv_line_cost=53000,
                            mv_line_type=33, mv_line_amperage_limit=8.0, mv_line_cost=7000, lv_line_type=0.240,
                            lv_line_cost=4250, lv_line_max_length=0.5, service_transf_type=50, service_transf_cost=4250,
                            max_nodes_per_serv_trans=300, mv_lv_sub_station_type=400, mv_lv_sub_station_cost=10000,
@@ -175,7 +177,7 @@ class Technology:
         cls.end_year = end_year
 
         # RUN_PARAM: Here are the assumptions related to cost and physical properties of grid extension elements
-        cls.discount_rate = discount_rate
+        #cls.discount_rate = discount_rate
         cls.hv_line_type = hv_line_type  # kV
         cls.hv_line_cost = hv_line_cost  # $/km for 69kV
         cls.mv_line_type = mv_line_type  # kV
@@ -1268,7 +1270,8 @@ class SettlementProcessor:
         self.df[SET_ELEC_FINAL_CODE + "{}".format(start_year)] = \
             self.df.apply(lambda row: 1 if row[SET_ELEC_CURRENT] == 1 else 99, axis=1)
 
-        self.df[SET_ELEC_POP + "{}".format(start_year)] = self.df[SET_ELEC_POP_CALIB] # ToDo, adjust factor, unelectrified to 0
+        self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(start_year)] == 99, SET_ELEC_POP_CALIB] = 0
+        self.df[SET_ELEC_POP + "{}".format(start_year)] = self.df[SET_ELEC_POP_CALIB]
 
         return elec_modelled, rural_elec_modelled, urban_elec_modelled, dist_limit, \
             min_night_lights, min_pop, buffer, td_dist_2
@@ -1392,7 +1395,9 @@ class SettlementProcessor:
         self.df['MaxDist' + '{}'.format(year)] = max_dist
         self.df['GridCapacityRequired'] = peak_load / grid_calc.capacity_factor
         self.df['GridCapacityRequired' + '{}'.format(year)] = peak_load / grid_calc.capacity_factor
-        self.df['MaxIntensificationDist'] = (max_intensification_cost - filter_investment[0] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) / (cost_per_km / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) # Todo
+        self.df['MaxIntensificationDist'] = np.where(self.df[SET_NEW_CONNECTIONS + "{}".format(year)] > 0,
+            (max_intensification_cost - filter_investment[0] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) / (cost_per_km / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]),
+                                            0)  # Todo
 
     @staticmethod
     def start_extension_points(mv_lines_path, index_parts=True):
@@ -2278,9 +2283,9 @@ class SettlementProcessor:
             result_type='expand')
 
         hybrid_lcoe = pd.Series(hybrid_series[0])
-        hybrid_capacity = pd.Series(hybrid_series[2] * (self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 1000))
-        hybrid_investment = pd.Series(hybrid_series[1] * (self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 1000))
-        fuel_cost = pd.Series(hybrid_series[3] * (self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 1000))
+        hybrid_capacity = pd.Series(hybrid_series[2] * (self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000))
+        hybrid_investment = pd.Series(hybrid_series[1] * (self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000))
+        fuel_cost = pd.Series(hybrid_series[3] * (self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000))
         emission_factor = fuel_cost / self.df[
             SET_MG_DIESEL_FUEL + '{}'.format(year)] * 256.9131097 * 9.9445485  # ToDo check emission factor
         self.df['PVHybridEmissionFactor' + "{}".format(year)] = emission_factor
@@ -2772,11 +2777,11 @@ class SettlementProcessor:
         factor = min(connect_factor, cap_factor)
 
         if factor < 1:
-            #if final:
-            #    if connect_factor < 1:
-            #        print('Maximum number of grid connections were not enough to meet densification demand, results have more grid connections than the limit')
-            #    if cap_factor < 1:
-            #        print('Maximum new grid generation capacity was not enough to meet densification demand, results have more grid capacity than the limit')
+            if final:
+                if connect_factor < 1:
+                    print('Maximum number of grid connections were not enough to meet densification demand, results have more grid connections than the limit')
+                if cap_factor < 1:
+                    print('Maximum new grid generation capacity was not enough to meet densification demand, results have more grid capacity than the limit')
             if not final:
                 self.df.loc[self.df[SET_MIN_OVERALL + "{}".format(year)] == SET_LCOE_GRID + "{}".format(year), SET_NEW_CONNECTIONS + "{}".format(year)] *= factor
                 self.df.loc[self.df[SET_MIN_OVERALL + "{}".format(year)] == SET_LCOE_GRID + "{}".format(year), SET_NEW_CAPACITY + "{}".format(year)] *= factor
