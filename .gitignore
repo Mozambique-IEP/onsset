@@ -137,3 +137,8 @@ dmypy.json
 *.gpkg
 *.geojson
 *.qmd
+*.shx
+*.shp
+*.prj
+*.dbf
+*.cpg
