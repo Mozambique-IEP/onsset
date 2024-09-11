@@ -1423,19 +1423,34 @@ class SettlementProcessor:
         y_coords = []
 
         # Iterate through features in the GeoJSON
-        for line in data['geometry'].explode(index_parts=index_parts):
-            #if geom.geom_type == 'MultiLineString':
-            #    for line in geom:
-                    # Add original vertices
-                    for point in coords_to_points(line.coords):
-                        x_coords.append(point.x)
-                        y_coords.append(point.y)
-
-                    # Interpolate points if the line is longer than 750 meters
-                    if line.length > 750:
-                        for point in interpolate_points(line, distance):
+        try:
+            for line in data['geometry'].explode(index_parts=index_parts):
+                #if geom.geom_type == 'MultiLineString':
+                #    for line in geom:
+                        # Add original vertices
+                        for point in coords_to_points(line.coords):
                             x_coords.append(point.x)
                             y_coords.append(point.y)
+
+                        # Interpolate points if the line is longer than 750 meters
+                        if line.length > 750:
+                            for point in interpolate_points(line, distance):
+                                x_coords.append(point.x)
+                                y_coords.append(point.y)
+        except TypeError:
+            for line in data['geometry'].explode():
+                #if geom.geom_type == 'MultiLineString':
+                #    for line in geom:
+                        # Add original vertices
+                        for point in coords_to_points(line.coords):
+                            x_coords.append(point.x)
+                            y_coords.append(point.y)
+
+                        # Interpolate points if the line is longer than 750 meters
+                        if line.length > 750:
+                            for point in interpolate_points(line, distance):
+                                x_coords.append(point.x)
+                                y_coords.append(point.y)
 
         # Convert lists to numpy arrays
         x_array = np.array(x_coords)
@@ -1969,9 +1984,7 @@ class SettlementProcessor:
 
         # RUN_PARAM: This shall be changed if different urban/rural categorization is decided
         # Create new columns assigning number of people per household as per Urban/Rural type
-        self.df.loc[self.df[SET_URBAN] == 0, SET_NUM_PEOPLE_PER_HH] = num_people_per_hh_rural
-        self.df.loc[self.df[SET_URBAN] == 1, SET_NUM_PEOPLE_PER_HH] = num_people_per_hh_rural
-        self.df.loc[self.df[SET_URBAN] == 2, SET_NUM_PEOPLE_PER_HH] = num_people_per_hh_urban
+        
 
         logging.info('Calculate new connections')
         # Calculate new connections
