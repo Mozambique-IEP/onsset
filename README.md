@@ -9,51 +9,49 @@ onsset : Open Source Spatial Electrification Tool
 # Scope
 
 This repository contains the source code of the Open Source Spatial Electrification Tool
-([OnSSET](http://www.onsset.org/)).
+([OnSSET](http://www.onsset.org/)) adapted for the Mozambique IEP.
 
-
-The repository also includes sample test files available in ```.\test_data```
-and sample output files available in ```.\sample_output```.
-
-## Installation
+# Installation
 
 ### Requirements
 
-OnSSET requires Python > 3.5 with the following packages installed:
-- et-xmlfile
-- jdcal
+OnSSET requires Python > 3.8 with the following packages installed:
 - numpy
-- openpyxl
 - pandas
-- python-dateutil
-- pytz
-- six
-- xlrd
-- notebook
+- rasterio
+- jupyter
 - seaborn
-- matplotlib
-- scipy
-
-### Install with pip
-
-Install onsset from the Python Packaging Index (PyPI):
-
-```
-pip install onsset
-```
+- alphashape
+- geojson
+- click-log
+- trimesh
+- numba
 
 ### Install from GitHub
 
-Download or clone the repository and install the package in `develop`
-(editable) mode:
+Download or clone the repository which includes all of the codes and the environment file, then open Anaconda prompt 
+and run the following commands:
+
+First, browse to the location where the downloaded and extracted files are found on your computer:
+```
+cd ...
+```
+
+Next, run the following command to install all the required packages:
 
 ```
-git clone https://github.com/onsset/onsset.git
-cd onsset
-python setup.py develop
+conda env create --name moz_onsset_env --file gep_onsset_env.yml
+```
+
+Once the installation is complete, you can run the following two commands to activate the environment and start a 
+Jupyter Notebook:
+
+```
+conda activate moz_onsset_env
+
+jupyter notebook
 ```
 
 ## Contact
 For more information regarding the tool, its functionality and implementation
-please visit https://www.onsset.org or contact the development team
-at seap@desa.kth.se.
+please visit https://www.onsset.org.
