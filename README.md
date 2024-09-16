@@ -40,7 +40,7 @@ cd ...
 Next, run the following command to install all the required packages:
 
 ```
-conda env create --name moz_onsset_env --file gep_onsset_env.yml
+conda env create --name moz_onsset_env --file moz_onsset_env.yml
 ```
 
 Once the installation is complete, you can run the following two commands to activate the environment and start a 
