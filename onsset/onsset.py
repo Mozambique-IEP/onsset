@@ -361,13 +361,9 @@ class Technology:
         if get_max_dist:
             return lcoe, investment_cost, installed_capacity, peak_load
         elif self.hybrid:
-            hybrid_capacity = pd.DataFrame(self.hybrid_capacity)  # ToDo this exception can be handled more elegantly
-            try:
-                hybrid_capacity.rename(columns={2: 0}, inplace=True)
-            except:
-                pass
+            hybrid_capacity = pd.DataFrame(self.hybrid_capacity)
             return lcoe + pd.DataFrame(self.hybrid_fuel), pd.DataFrame(investment_cost[0] + self.hybrid_investment), \
-                hybrid_capacity #, hv, mv, lv, service_transf, connection, td_investment_cost
+                hybrid_capacity
         else:
             return lcoe, investment_cost, installed_capacity
 
@@ -796,7 +792,7 @@ class SettlementProcessor:
         logging.info('Ensure that columns that are supposed to be numeric are numeric')
 
         columns = [SET_NIGHT_LIGHTS, SET_POP, SET_GRID_CELL_AREA, SET_ELEC_POP, SET_GHI, SET_WINDVEL, SET_TRAVEL_HOURS,
-                   SET_ELEVATION, SET_SLOPE, SET_LAND_COVER, SET_SUBSTATION_DIST, SET_HV_DIST_CURRENT,
+                   SET_SUBSTATION_DIST, SET_HV_DIST_CURRENT,
                    SET_HV_DIST_PLANNED, SET_MV_DIST_CURRENT, SET_MV_DIST_PLANNED, SET_ROAD_DIST, SET_X_DEG, SET_Y_DEG,
                    SET_DIST_TO_TRANS, SET_HYDRO_DIST, SET_HYDRO, SET_HYDRO_FID, SET_URBAN,
                    SET_AGRI_DEMAND, SET_HEALTH_DEMAND, SET_EDU_DEMAND, SET_COMMERCIAL_DEMAND,
@@ -1043,7 +1039,7 @@ class SettlementProcessor:
         self.df[SET_POP + "{}".format(start_year)] = self.df[SET_POP_CALIB]
 
     def calibrate_grid_elec_current(self, grid_elec_current, grid_elec_current_urban, grid_elec_current_rural,
-                                    start_year, min_night_lights=0, min_pop=50, max_transformer_dist=2, max_mv_dist=2,
+                                    start_year, min_night_lights=0.05, min_pop=100, max_transformer_dist=2, max_mv_dist=3,
                                     max_hv_dist=5, buffer=False):
         """
         Calibrate the current electrification status
@@ -2088,7 +2084,7 @@ class SettlementProcessor:
             wb_tier_urban_clusters = int(rural_tier)
             wb_tier_urban_centers = int(urban_tier)
 
-            # ToDo Update custom demand NB to produce hh demand instead
+            # ToDo Update custom demand NB to produce hh demand instead, then remove multiplier of hh size below
             if wb_tier_urban_centers == 6:
                 wb_tier_urban_centers = 'Custom'
             if wb_tier_urban_clusters == 6:
@@ -2098,13 +2094,22 @@ class SettlementProcessor:
 
             self.df[SET_HH_DEMAND] = 0.
 
-            # Define per capita residential demand
-            self.df.loc[self.df[SET_URBAN] == 0, SET_HH_DEMAND] = self.df[
-                SET_RESIDENTIAL_TIER + str(wb_tier_rural)]
-            self.df.loc[self.df[SET_URBAN] == 1, SET_HH_DEMAND] = self.df[
-                SET_RESIDENTIAL_TIER + str(wb_tier_urban_clusters)]
-            self.df.loc[self.df[SET_URBAN] == 2, SET_HH_DEMAND] = self.df[
-                SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)]
+            # Define residential demand
+            if wb_tier_rural == 'Custom':
+                self.df.loc[self.df[SET_URBAN] == 0, SET_HH_DEMAND] = self.df[
+                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)] * self.df[SET_NUM_PEOPLE_PER_HH]
+            else:
+                self.df.loc[self.df[SET_URBAN] == 0, SET_HH_DEMAND] = self.df[
+                    SET_RESIDENTIAL_TIER + str(wb_tier_rural)]
+
+            if wb_tier_urban_centers == 'Custom':
+                self.df.loc[self.df[SET_URBAN] > 0, SET_HH_DEMAND] = self.df[
+                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)] * self.df[SET_NUM_PEOPLE_PER_HH]
+            else:
+                self.df.loc[self.df[SET_URBAN] == 1, SET_HH_DEMAND] = self.df[
+                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_clusters)]
+                self.df.loc[self.df[SET_URBAN] == 2, SET_HH_DEMAND] = self.df[
+                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)]
 
             tier_2 = 73  # 73 refers to kWh/household/year. It is the minimum consumption of Tier 2
             tier_3 = 365
@@ -2147,11 +2152,11 @@ class SettlementProcessor:
             self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
 
         self.df.loc[self.df[SET_URBAN] == 0, SET_TOTAL_ENERGY_PER_CELL] = \
-            self.df[SET_HH_DEMAND] * self.df[SET_POP + "{}".format(year)] + produse
+            self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
         self.df.loc[self.df[SET_URBAN] == 1, SET_TOTAL_ENERGY_PER_CELL] = \
-            self.df[SET_HH_DEMAND] * self.df[SET_POP + "{}".format(year)] + produse
+            self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
         self.df.loc[self.df[SET_URBAN] == 2, SET_TOTAL_ENERGY_PER_CELL] = \
-            self.df[SET_HH_DEMAND] * self.df[SET_POP + "{}".format(year)] + produse
+            self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
 
     def calculate_demand(self, year, num_people_per_hh_rural, num_people_per_hh_urban,
                          time_step, urban_tier, rural_tier, moz=False):
@@ -2335,7 +2340,7 @@ class SettlementProcessor:
             for g in ghi_range:
                 for d in diesel_range:
                     gen_lcoe, inv, cap, fuel_cost = \
-                        self.optimize_mini_grid(ghi_curve * ((ghi_curve.sum() / 1000) / g),
+                        self.optimize_mini_grid(ghi_curve * g * 1000 / ghi_curve.sum(), #((ghi_curve.sum() / 1000) / g),
                                                 temp,
                                                 10000,
                                                 t,
@@ -2631,6 +2636,8 @@ class SettlementProcessor:
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
         self.df.loc[self.df[SET_MV_DIST_CURRENT] < mg_min_grid_dist, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
+
+        self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 8, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 0.01 # ToDo ensure remain mg
 
         # logging.info('Calculate minigrid PV LCOE')
         # self.df[SET_LCOE_MG_PV + "{}".format(year)], mg_pv_investment, mg_pv_capacity = \
