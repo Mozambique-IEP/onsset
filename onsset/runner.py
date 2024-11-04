@@ -370,6 +370,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.calculate_demand(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
                                       urban_tier, rural_tier)
 
+            onsseter.calculate_unmet_demand(year, reliability=0.85)
+
             onsseter.diesel_cost_columns(sa_diesel_cost, mg_diesel_cost, year)
 
             if hybrid_lookup_table:

@@ -106,6 +106,8 @@ SET_MIN_TD_DIST = 'minTDdist'
 SET_SA_DIESEL_FUEL = 'SADieselFuelCost'
 SET_MG_DIESEL_FUEL = 'MGDieselFuelCost'
 SET_MG_DIST = 'MGDist'
+SET_GRID_RELIABILITY = 'GridReliability' #To Calculate grid reliability
+SET_UNMET_DEMAND = 'UnmetDemand' #To Calculate grid reliability
 
 # General
 LHV_DIESEL = 9.9445485  # (kWh/l) lower heating value
@@ -203,9 +205,9 @@ class Technology:
         cls.load_moment = load_moment  # for 50mm aluminum conductor under 5% voltage drop (kW m)
 
     def get_lcoe(self, energy_per_cell, people, num_people_per_hh, start_year, end_year, new_connections,
-                 total_energy_per_cell, prev_code, grid_cell_area, additional_mv_line_length=0.0,
-                 capacity_factor=0.9, grid_penalty_ratio=1, fuel_cost=0, elec_loop=0, productive_nodes=0,
-                 additional_transformer=0, penalty=1, get_max_dist=False):
+                 total_energy_per_cell, prev_code, grid_cell_area, unmet_demand=0, additional_mv_line_length=0.0,
+                 capacity_factor=0.9, grid_penalty_ratio=1, cost_of_not_served_energy=0.8, fuel_cost=0, elec_loop=0,
+                 productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False):
         """Calculates the LCOE depending on the parameters.
 
         Parameters
@@ -344,10 +346,12 @@ class Technology:
         for p in range(project_life):
             fuel[:, p] = el_gen[:, p] * fuel_cost
 
+        cost_unmet_energy = np.outer(unmet_demand, cost_of_not_served_energy)
+
         discounted_investments = investments / discount_factor
         dicounted_grid_capacity_investments = grid_capacity_investments / discount_factor
         investment_cost = np.sum(discounted_investments, axis=1) + np.sum(dicounted_grid_capacity_investments, axis=1)
-        discounted_costs = (investments + operation_and_maintenance + fuel - salvage) / discount_factor
+        discounted_costs = (investments + operation_and_maintenance + fuel - salvage + cost_unmet_energy) / discount_factor
         discounted_generation = el_gen / discount_factor
         lcoe = np.sum(discounted_costs, axis=1) / np.sum(discounted_generation, axis=1)
         # lcoe = pd.DataFrame(lcoe[:, np.newaxis])
@@ -2182,6 +2186,11 @@ class SettlementProcessor:
         self.calculate_new_connections(year, time_step, num_people_per_hh_rural, num_people_per_hh_urban, moz)
         self.set_residential_demand(rural_tier, urban_tier)
         self.calculate_total_demand_per_settlement(year, time_step)
+
+    def calculate_unmet_demand(self, year, reliability=0.85):
+        if SET_GRID_RELIABILITY not in self.df or self.df[SET_GRID_RELIABILITY].empty:
+            self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
+            self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - reliability)
 
     @staticmethod
     def optimize_mini_grid(ghi_curve, temp, energy, tier, diesel_price, start_year, end_year,
