@@ -1922,7 +1922,8 @@ class SettlementProcessor:
                                elec_loop=elecorder,
                                additional_transformer=additional_transformer,
                                capacity_factor=grid_calc.capacity_factor,
-                               get_max_dist=get_max_dist)
+                               get_max_dist=get_max_dist,
+                               unmet_demand=self.df[SET_UNMET_DEMAND + "{}".format(year)])
 
         if get_max_dist:
             return grid[0], grid[1], grid[2], grid[3]
