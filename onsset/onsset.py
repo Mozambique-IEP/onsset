@@ -207,7 +207,7 @@ class Technology:
     def get_lcoe(self, energy_per_cell, people, num_people_per_hh, start_year, end_year, new_connections,
                  total_energy_per_cell, prev_code, grid_cell_area, unmet_demand=0, additional_mv_line_length=0.0,
                  capacity_factor=0.9, grid_penalty_ratio=1, cost_of_not_served_energy=0.8, fuel_cost=0, elec_loop=0,
-                 productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False):
+                 productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False, fuel_cost_settlement=0):
         """Calculates the LCOE depending on the parameters.
 
         Parameters
@@ -346,12 +346,42 @@ class Technology:
         for p in range(project_life):
             fuel[:, p] = el_gen[:, p] * fuel_cost
 
-        cost_unmet_energy = np.outer(unmet_demand, cost_of_not_served_energy)
+        # Adding diesel_genset to penalize grid LCOE due to low reliability.
+        #Diesel genset suplies unmet demand
+        #Asummptions: Generator sized are sized for the settlement to supply energy through all the year
+        mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,
+                                    capacity_factor=0.7,
+                                    tech_life=15,
+                                    om_costs=0.1,
+                                    capital_cost=721,
+                                    efficiency=0.28)
+
+        # Calculating diesel_genset parameters
+        # Install Capacity
+        unmet_demand = np.ones(len(generation_per_year)) * unmet_demand
+        installed_capacity_diesel_genset = unmet_demand / mg_diesel_calc.capacity_factor / HOURS_PER_YEAR / mg_diesel_calc.base_to_peak_load_ratio
+        capital_cost_diesel_genset = np.zeros(project_life)
+        capital_cost_diesel_genset[0] = 1
+        capital_cost_diesel_genset = \
+            np.outer(installed_capacity_diesel_genset * mg_diesel_calc.capital_cost,
+                     capital_cost_diesel_genset)  # Capital_cost_diesel_gen_set
+
+        # Diesel usage and O&M
+        diesel_gen_set_generation = unmet_demand / mg_diesel_calc.efficiency  # kWh
+        diesel_gen_set_generation = diesel_gen_set_generation / LHV_DIESEL  # Liters
+        fuel_gen_set = diesel_gen_set_generation * fuel_cost_settlement  # USD
+        life_time_diesel = np.ones(project_life)
+
+        total_om_cost_diesel = np.outer(
+            installed_capacity_diesel_genset * mg_diesel_calc.om_costs * mg_diesel_calc.capital_cost, life_time_diesel)
+        fuel_gen_set = np.outer(fuel_gen_set, life_time_diesel)
+
+        total_diesel_genset = capital_cost_diesel_genset + fuel_gen_set + total_om_cost_diesel
 
         discounted_investments = investments / discount_factor
         dicounted_grid_capacity_investments = grid_capacity_investments / discount_factor
         investment_cost = np.sum(discounted_investments, axis=1) + np.sum(dicounted_grid_capacity_investments, axis=1)
-        discounted_costs = (investments + operation_and_maintenance + fuel - salvage + cost_unmet_energy) / discount_factor
+        discounted_costs = (investments + operation_and_maintenance + fuel - salvage + total_diesel_genset) / discount_factor
         discounted_generation = el_gen / discount_factor
         lcoe = np.sum(discounted_costs, axis=1) / np.sum(discounted_generation, axis=1)
         # lcoe = pd.DataFrame(lcoe[:, np.newaxis])
@@ -1922,7 +1952,10 @@ class SettlementProcessor:
                                elec_loop=elecorder,
                                additional_transformer=additional_transformer,
                                capacity_factor=grid_calc.capacity_factor,
-                               get_max_dist=get_max_dist)
+                               get_max_dist=get_max_dist,
+                               unmet_demand=self.df[SET_UNMET_DEMAND + "{}".format(year)],
+                               fuel_cost_settlement=self.df[SET_MG_DIESEL_FUEL + "{}".format(year)]
+                               )
 
         if get_max_dist:
             return grid[0], grid[1], grid[2], grid[3]

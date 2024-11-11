@@ -38,14 +38,14 @@ if choice == 1:
 
 elif choice == 2:
 
-    specs_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\CalibratedFilesOnSSET\Specs.xlsx"
+    specs_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\Specs.xlsx"
     specs = pd.read_excel(specs_path, index_col=0)
 
-    calibrated_csv_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\CalibratedFilesOnSSET\Data.csv"
+    calibrated_csv_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\Calibrated.csv"
 
-    results_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results"
+    results_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results\diesel_gen_set_calibrated"
 
-    summary_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results"
+    summary_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results\diesel_gen_set_calibrated"
 
     wind_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\mz-2-wind.csv"
 
