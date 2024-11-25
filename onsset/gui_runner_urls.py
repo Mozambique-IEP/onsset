@@ -38,14 +38,18 @@ if choice == 1:
 
 elif choice == 2:
 
-    specs_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\Specs.xlsx"
+    import logging
+
+    logging.basicConfig(format='%(asctime)s\t\t%(message)s', level=logging.DEBUG)
+
+    specs_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Two_tiers\Specs.xlsx"
     specs = pd.read_excel(specs_path, index_col=0)
 
-    calibrated_csv_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\Calibrated.csv"
+    calibrated_csv_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Two_tiers\Calibrated_clean.csv"
 
-    results_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results\diesel_gen_set_calibrated"
+    results_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results\diesel_gen_set_calibrated_tier"
 
-    summary_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results\diesel_gen_set_calibrated"
+    summary_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results\diesel_gen_set_calibrated_tier"
 
     wind_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\mz-2-wind.csv"
 

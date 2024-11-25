@@ -333,15 +333,14 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                 'full_life_cycles': 2000  # Equivalent full life-cycles of battery until replacement
             }
 
-            mg_diesel_calc = Technology(om_of_td_lines=0.02,
-                                        distribution_losses=0.05,
-                                        connection_cost_per_hh=100,
-                                        base_to_peak_load_ratio=0.85,
-                                        capacity_factor=0.7,
+            #Used to model LCOE for not-served-energy
+            mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,  # Deducted from curves
+                                        capacity_factor=0.7, #Typical for diesel generators
                                         tech_life=15,
                                         om_costs=0.1,
-                                        capital_cost={float("inf"): 721},
-                                        mini_grid=True)
+                                        capital_cost=450,  # cost provided by FUNAE
+                                        efficiency=0.28, #Uset to calculated diesel usage
+                                        discount_rate=grid_discount_rate)
 
             sa_diesel_calc = Technology(base_to_peak_load_ratio=0.9,
                                         capacity_factor=0.5,
@@ -370,7 +369,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.calculate_demand(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
                                       urban_tier, rural_tier)
 
-            onsseter.calculate_unmet_demand(year, reliability=0.8)
+            onsseter.calculate_unmet_demand(year, reliability=1)
 
             onsseter.diesel_cost_columns(sa_diesel_cost, mg_diesel_cost, year)
 
@@ -403,14 +402,15 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             mg_hydro_investment, mg_hydro_capacity = onsseter.calculate_off_grid_lcoes(mg_hydro_calc, mg_wind_hybrid_calc,
                                                                                        sa_pv_calc,
                                                                                        mg_pv_hybrid_calc,
+                                                                                       mg_diesel_calc,
                                                                                        year, end_year, time_step,
                                                                                        techs, tech_codes, min_mg_size, 0)
 
             grid_investment, grid_capacity, grid_cap_gen_limit, grid_connect_limit = \
                 onsseter.pre_electrification(grid_price, year, time_step, end_year, grid_calc,
-                                             annual_grid_cap_gen_limit, annual_new_grid_connections_limit)
+                                             annual_grid_cap_gen_limit, annual_new_grid_connections_limit, mg_diesel_calc)
 
-            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc, max_auto_intensification_cost)
+            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc, mg_diesel_calc, max_auto_intensification_cost)
 
             onsseter.pre_selection(eleclimit, year, time_step, 2, auto_intensification)
 
@@ -418,6 +418,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.df[SET_LCOE_GRID + "{}".format(year)], onsseter.df[SET_MIN_GRID_DIST + "{}".format(year)], \
                 grid_investment, grid_capacity, x_coordinates, y_coordinates, new_lines_geojson[year] = \
                 onsseter.elec_extension_numba(grid_calc,
+                                              mg_diesel_calc,
                                               max_grid_extension_dist,
                                               year,
                                               start_year,

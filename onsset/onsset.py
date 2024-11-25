@@ -108,6 +108,8 @@ SET_MG_DIESEL_FUEL = 'MGDieselFuelCost'
 SET_MG_DIST = 'MGDist'
 SET_GRID_RELIABILITY = 'GridReliability' #To Calculate grid reliability
 SET_UNMET_DEMAND = 'UnmetDemand' #To Calculate grid reliability
+SET_BACKUP_CAP = "BackupCap"
+SET_BACKUP_LCOE ="BackUpLCOE"
 
 # General
 LHV_DIESEL = 9.9445485  # (kWh/l) lower heating value
@@ -205,9 +207,10 @@ class Technology:
         cls.load_moment = load_moment  # for 50mm aluminum conductor under 5% voltage drop (kW m)
 
     def get_lcoe(self, energy_per_cell, people, num_people_per_hh, start_year, end_year, new_connections,
-                 total_energy_per_cell, prev_code, grid_cell_area, unmet_demand=0, additional_mv_line_length=0.0,
-                 capacity_factor=0.9, grid_penalty_ratio=1, cost_of_not_served_energy=0.8, fuel_cost=0, elec_loop=0,
-                 productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False, fuel_cost_settlement=0):
+                 total_energy_per_cell, prev_code, grid_cell_area, mg_diesel_calc, unmet_demand=0, additional_mv_line_length=0.0,
+                 capacity_factor=0.9, grid_penalty_ratio=1, fuel_cost=0, elec_loop=0,
+                 productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False, fuel_cost_settlement=0,
+                 genset_backup=False):
         """Calculates the LCOE depending on the parameters.
 
         Parameters
@@ -346,41 +349,19 @@ class Technology:
         for p in range(project_life):
             fuel[:, p] = el_gen[:, p] * fuel_cost
 
-        # Adding diesel_genset to penalize grid LCOE due to low reliability.
-        #Diesel genset suplies unmet demand
-        #Asummptions: Generator sized are sized for the settlement to supply energy through all the year
-        mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,
-                                    capacity_factor=0.7,
-                                    tech_life=15,
-                                    om_costs=0.1,
-                                    capital_cost=721,
-                                    efficiency=0.28)
-
-        # Calculating diesel_genset parameters
-        # Install Capacity
-        unmet_demand = np.ones(len(generation_per_year)) * unmet_demand
-        installed_capacity_diesel_genset = unmet_demand / mg_diesel_calc.capacity_factor / HOURS_PER_YEAR / mg_diesel_calc.base_to_peak_load_ratio
-        capital_cost_diesel_genset = np.zeros(project_life)
-        capital_cost_diesel_genset[0] = 1
-        capital_cost_diesel_genset = \
-            np.outer(installed_capacity_diesel_genset * mg_diesel_calc.capital_cost,
-                     capital_cost_diesel_genset)  # Capital_cost_diesel_gen_set
-
-        # Diesel usage and O&M
-        diesel_gen_set_generation = unmet_demand / mg_diesel_calc.efficiency  # kWh
-        diesel_gen_set_generation = diesel_gen_set_generation / LHV_DIESEL  # Liters
-        fuel_gen_set = diesel_gen_set_generation * fuel_cost_settlement  # USD
-        life_time_diesel = np.ones(project_life)
-
-        total_om_cost_diesel = np.outer(
-            installed_capacity_diesel_genset * mg_diesel_calc.om_costs * mg_diesel_calc.capital_cost, life_time_diesel)
-        fuel_gen_set = np.outer(fuel_gen_set, life_time_diesel)
-
-        total_diesel_genset = capital_cost_diesel_genset + fuel_gen_set + total_om_cost_diesel
+        if genset_backup:
+            lcoe_diesel_genset, capital_cost_diesel_genset, installed_capacity_diesel_genset, total_diesel_genset =\
+                mg_diesel_calc.get_lcoe_backup(project_life, step, unmet_demand, fuel_cost_settlement)
+        else:
+            lcoe_diesel_genset = np.zeros((len(generation_per_year), 1))
+            capital_cost_diesel_genset = np.zeros((len(generation_per_year), 1))
+            installed_capacity_diesel_genset = np.zeros((len(generation_per_year), 1))
+            total_diesel_genset = np.zeros((len(generation_per_year), 1))
 
         discounted_investments = investments / discount_factor
         dicounted_grid_capacity_investments = grid_capacity_investments / discount_factor
-        investment_cost = np.sum(discounted_investments, axis=1) + np.sum(dicounted_grid_capacity_investments, axis=1)
+
+        investment_cost = np.sum(discounted_investments, axis=1) + np.sum(dicounted_grid_capacity_investments, axis=1) + np.sum(capital_cost_diesel_genset, axis=1)
         discounted_costs = (investments + operation_and_maintenance + fuel - salvage + total_diesel_genset) / discount_factor
         discounted_generation = el_gen / discount_factor
         lcoe = np.sum(discounted_costs, axis=1) / np.sum(discounted_generation, axis=1)
@@ -392,14 +373,77 @@ class Technology:
         investment_cost = pd.DataFrame(investment_cost)
         installed_capacity = pd.DataFrame(installed_capacity)
 
-        if get_max_dist:
-            return lcoe, investment_cost, installed_capacity, peak_load
-        elif self.hybrid:
-            hybrid_capacity = pd.DataFrame(self.hybrid_capacity)
-            return lcoe + pd.DataFrame(self.hybrid_fuel), pd.DataFrame(investment_cost[0] + self.hybrid_investment), \
-                hybrid_capacity
+        if genset_backup:
+            return  lcoe, investment_cost, installed_capacity, installed_capacity_diesel_genset, lcoe_diesel_genset
         else:
-            return lcoe, investment_cost, installed_capacity
+            if get_max_dist:
+                return lcoe, investment_cost, installed_capacity, peak_load
+            elif self.hybrid:
+                hybrid_capacity = pd.DataFrame(self.hybrid_capacity)
+                return lcoe + pd.DataFrame(self.hybrid_fuel), pd.DataFrame(investment_cost[0] + self.hybrid_investment), \
+                    hybrid_capacity
+            else:
+                return lcoe, investment_cost, installed_capacity
+
+    def get_lcoe_backup(self, project_life, step, unmet_demand, fuel_cost_settlement):
+
+
+        if type(unmet_demand) == int or type(unmet_demand) == float or type(unmet_demand) == np.float64:
+            if unmet_demand == 0:
+                # If there is no demand, set the demand low (prevent div/0 error) and continue.
+                unmet_demand = 0.000000000001
+        else:
+            unmet_demand = np.maximum(unmet_demand, 0.000000000001)
+
+        reinvest_year = 0
+
+        # If the technology life is less than the project life, we will have to invest twice to buy it again
+        if self.tech_life + step < project_life:
+            reinvest_year = self.tech_life + step
+
+        year = np.arange(project_life)
+        discount_factor = (1 + self.discount_rate) ** year
+
+        installed_capacity_diesel_genset = unmet_demand / self.capacity_factor / HOURS_PER_YEAR / self.base_to_peak_load_ratio
+        capital_cost_diesel_genset = np.zeros(project_life)
+        capital_cost_diesel_genset[0] = 1
+        total_investment_cost = installed_capacity_diesel_genset * self.capital_cost
+
+        # Calculate the year of re-investment if tech_life is smaller than project life
+        if reinvest_year:
+            capital_cost_diesel_genset[reinvest_year] = 1
+        capital_cost_diesel_genset= np.outer(total_investment_cost, capital_cost_diesel_genset)
+
+        # Diesel usage and O&M
+        diesel_gen_set_generation = unmet_demand / self.efficiency  # kWh
+        fuel_gen_set = diesel_gen_set_generation * fuel_cost_settlement  # kWh * USD/kWh
+        life_time_diesel = np.ones(project_life)
+
+        total_om_cost_diesel = np.outer(
+            installed_capacity_diesel_genset * self.om_costs * self.capital_cost, life_time_diesel)
+
+        fuel_gen_set = np.outer(fuel_gen_set, life_time_diesel)
+
+        if reinvest_year > 0:
+            used_life = (project_life - step) - self.tech_life
+        else:
+            used_life = project_life - step - 1
+
+        salvage_diesel_genset = np.zeros(project_life)
+        salvage_diesel_genset[-1] = 1
+        salvage_diesel_genset = np.outer(installed_capacity_diesel_genset * self.capital_cost * (
+                    1 - used_life / self.tech_life), salvage_diesel_genset)
+
+        total_diesel_genset = capital_cost_diesel_genset + fuel_gen_set + total_om_cost_diesel - salvage_diesel_genset
+
+        discounted_total_diesel_genset = total_diesel_genset / discount_factor
+
+        discounted_unmet_demand = np.outer(diesel_gen_set_generation, life_time_diesel) / discount_factor
+
+        lcoe_diesel_genset = np.sum(discounted_total_diesel_genset, axis=1) / np.sum(discounted_unmet_demand, axis=1)
+
+        # return USD/kWh, USD, kW
+        return lcoe_diesel_genset, capital_cost_diesel_genset, installed_capacity_diesel_genset, total_diesel_genset
 
     def transmission_network(self, peak_load, additional_mv_line_length=0, additional_transformer=0,
                              mv_distribution=False):
@@ -1353,7 +1397,7 @@ class SettlementProcessor:
         self.df[SET_MIN_TD_DIST] = self.df[[SET_MV_DIST_PLANNED, SET_HV_DIST_PLANNED]].min(axis=1)
 
     def pre_electrification(self, grid_price, year, time_step, end_year, grid_calc, grid_capacity_limit,
-                            grid_connect_limit):
+                            grid_connect_limit, mg_diesel_calc):
 
         """" ... """
 
@@ -1363,8 +1407,8 @@ class SettlementProcessor:
         prev_code = self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)].copy(deep=True)
 
         # Grid-electrified settlements
-        electrified_loce, electrified_investment, electrified_capacity = self.get_grid_lcoe(0, 0, 0, year, time_step,
-                                                                                            end_year, grid_calc)
+        electrified_loce, electrified_investment, electrified_capacity, peak_load_diesel_gen, lcoe_diesel = self.get_grid_lcoe(0, 0, 0, year, time_step,
+                                                                                            end_year, grid_calc, mg_diesel_calc)
         electrified_investment = electrified_investment[0]
         electrified_capacity = electrified_capacity[0]
         grid_investment = np.where(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 1,
@@ -1375,6 +1419,10 @@ class SettlementProcessor:
         self.df[SET_LCOE_GRID + "{}".format(year)] = 99.
         self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 1,
                     SET_LCOE_GRID + "{}".format(year)] = grid_price
+
+        self.df[SET_BACKUP_CAP + "{}".format(year)] = peak_load_diesel_gen
+
+        self.df[SET_BACKUP_LCOE + "{}".format(year)] = lcoe_diesel
 
         # Two restrictions may be imposed on the grid. The new grid generation capacity that can be added and the
         # number of new households that can be connected. The next step calculates how much of that will be used up due
@@ -1389,13 +1437,13 @@ class SettlementProcessor:
 
         return pd.Series(grid_investment), pd.Series(grid_capacity), grid_capacity_limit, grid_connect_limit
 
-    def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc, max_intensification_cost, min_load=0):
+    def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc, mg_diesel_calc, max_intensification_cost, min_load=0):
 
         # Calculate max extension for each settlement to be connected to the grid at
         # a lower cost than least-cost off-grid alternative
 
         filter_lcoe, filter_investment, filter_capacity, peak_load = \
-            self.get_grid_lcoe(0, 0, 0, year, time_step, end_year, grid_calc, get_max_dist=True)
+            self.get_grid_lcoe(0, 0, 0, year, time_step, end_year, grid_calc, mg_diesel_calc, get_max_dist=True)
 
         project_life = year - start_year
         years = np.arange(project_life)
@@ -1607,7 +1655,7 @@ class SettlementProcessor:
         self.df['X'] = lon_to_x(self.df[SET_X_DEG])
         self.df['Y'] = lat_to_y(self.df[SET_Y_DEG])
 
-    def elec_extension_numba(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
+    def elec_extension_numba(self, grid_calc, mg_diesel_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
                              grid_connect_limit, x_coordinates, y_coordinates, mg_interconnection,
                              auto_intensification=0, prioritization=0, threshold=999999999):
 
@@ -1680,6 +1728,13 @@ class SettlementProcessor:
 
                 if len(newly_electrified) > 0:
                     print(len(newly_electrified), ' new settlements connected to the grid', time.ctime())
+
+                new_lines += new_mv_line_coords
+                new_electrified += newly_electrified
+                new_dists += newly_electrified_dists
+
+            else:
+                newly_electrified = []
 
             i += 1
             if len(newly_electrified) == 0:
@@ -1773,8 +1828,8 @@ class SettlementProcessor:
 
         self.df.sort_index(inplace=True)
 
-        grid_lcoe, grid_investment, grid_capacity = \
-            self.get_grid_lcoe(self.df['NewDist'], 0, 0, year, time_step, end_year, grid_calc)
+        grid_lcoe, grid_investment, grid_capacity, backup_genset, lcoe_diesel = \
+            self.get_grid_lcoe(self.df['NewDist'], 0, 0, year, time_step, end_year, grid_calc, mg_diesel_calc)
 
         grid_lcoe = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 99, grid_lcoe[0])
         grid_investment = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 0, grid_investment[0])
@@ -1936,7 +1991,7 @@ class SettlementProcessor:
         return new_lcoes, cell_path_adjusted, elecorder, cell_path_real, pd.DataFrame(new_investment), pd.DataFrame(
             new_capacity)
 
-    def get_grid_lcoe(self, dist_adjusted, elecorder, additional_transformer, year, time_step, end_year, grid_calc,
+    def get_grid_lcoe(self, dist_adjusted, elecorder, additional_transformer, year, time_step, end_year, grid_calc, mg_diesel_calc,
                       get_max_dist=False):
         grid = \
             grid_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
@@ -1954,13 +2009,17 @@ class SettlementProcessor:
                                capacity_factor=grid_calc.capacity_factor,
                                get_max_dist=get_max_dist,
                                unmet_demand=self.df[SET_UNMET_DEMAND + "{}".format(year)],
-                               fuel_cost_settlement=self.df[SET_MG_DIESEL_FUEL + "{}".format(year)]
+                               fuel_cost_settlement=self.df[SET_MG_DIESEL_FUEL + "{}".format(year)],
+                               mg_diesel_calc = mg_diesel_calc,
+                               genset_backup=True
                                )
 
         if get_max_dist:
             return grid[0], grid[1], grid[2], grid[3]
         else:
-            return grid[0], grid[1], grid[2]
+            return grid[0], grid[1], grid[2], grid[3], grid[4]
+
+
 
     def closest_electrified_settlement(self, new_electrified, unelectrified, cell_path_real, grid_penalty_ratio,
                                        elecorder):
@@ -2221,9 +2280,12 @@ class SettlementProcessor:
         self.calculate_total_demand_per_settlement(year, time_step)
 
     def calculate_unmet_demand(self, year, reliability=0.85):
-        if SET_GRID_RELIABILITY not in self.df or self.df[SET_GRID_RELIABILITY].empty:
+        if SET_GRID_RELIABILITY in self.df :
             self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
-            self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - reliability)
+                np.round(self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - self.df[SET_GRID_RELIABILITY]))
+        else:
+            self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
+                self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - reliability)
 
     @staticmethod
     def optimize_mini_grid(ghi_curve, temp, energy, tier, diesel_price, start_year, end_year,
@@ -2639,7 +2701,7 @@ class SettlementProcessor:
 
         return hybrid_lcoe, hybrid_capacity, hybrid_investment, wind_hybrid_investment
 
-    def calculate_off_grid_lcoes(self, mg_hydro_calc, mg_wind_hybrid_calc, sa_pv_calc,  mg_pv_hybrid_calc, year, end_year, time_step, techs, tech_codes,
+    def calculate_off_grid_lcoes(self, mg_hydro_calc, mg_wind_hybrid_calc, sa_pv_calc,  mg_pv_hybrid_calc, mg_diesel_calc, year, end_year, time_step, techs, tech_codes,
                                  min_mg_size=0, mg_min_grid_dist=0, diesel_techs=0):  # mg_diesel_calc, sa_diesel_calc,
         """
         Calculate the LCOEs for all off-grid technologies
@@ -2657,7 +2719,8 @@ class SettlementProcessor:
                                    num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
                                    grid_cell_area=self.df[SET_GRID_CELL_AREA],
                                    additional_mv_line_length=self.df[SET_HYDRO_DIST],
-                                   capacity_factor=mg_hydro_calc.capacity_factor)
+                                   capacity_factor=mg_hydro_calc.capacity_factor,
+                                   mg_diesel_calc=mg_diesel_calc)
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_HYDRO + "{}".format(year)] = 99
         self.df.loc[self.df[SET_MV_DIST_CURRENT] < mg_min_grid_dist, SET_LCOE_MG_HYDRO + "{}".format(year)] = 99
@@ -2673,7 +2736,8 @@ class SettlementProcessor:
                                        prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
                                        num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
                                        grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                       capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR)
+                                       capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR,
+                                       mg_diesel_calc=mg_diesel_calc)
         self.df.loc[self.df[SET_LCOE_MG_PV_HYBRID + "{}".format(year)] > 99, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
@@ -2705,7 +2769,8 @@ class SettlementProcessor:
                                        prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
                                        num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
                                        grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                       capacity_factor=self.df[SET_WINDCF])
+                                       capacity_factor=self.df[SET_WINDCF],
+                                        mg_diesel_calc=mg_diesel_calc)
         self.df.loc[self.df[SET_LCOE_MG_WIND + "{}".format(year)] > 99, SET_LCOE_MG_WIND + "{}".format(year)] = 99
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_WIND + "{}".format(year)] = 99
@@ -2775,7 +2840,8 @@ class SettlementProcessor:
                                 prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
                                 num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
                                 grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR)
+                                capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR,
+                                mg_diesel_calc=mg_diesel_calc)
 
         self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] != 3) &
                     (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] != 99),
