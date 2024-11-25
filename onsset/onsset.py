@@ -206,7 +206,7 @@ class Technology:
 
     def get_lcoe(self, energy_per_cell, people, num_people_per_hh, start_year, end_year, new_connections,
                  total_energy_per_cell, prev_code, grid_cell_area, unmet_demand=0, additional_mv_line_length=0.0,
-                 capacity_factor=0.9, grid_penalty_ratio=1, cost_of_not_served_energy=0.8, fuel_cost=0, elec_loop=0,
+                 capacity_factor=0.9, grid_penalty_ratio=1, cost_of_not_served_energy=0.6, fuel_cost=0, elec_loop=0,
                  productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False):
         """Calculates the LCOE depending on the parameters.
 
@@ -1651,6 +1651,13 @@ class SettlementProcessor:
                 if len(newly_electrified) > 0:
                     print(len(newly_electrified), ' new settlements connected to the grid', time.ctime())
 
+                new_lines += new_mv_line_coords
+                new_electrified += newly_electrified
+                new_dists += newly_electrified_dists
+
+            else:
+                newly_electrified = []
+
             i += 1
             if len(newly_electrified) == 0:
                 iterate = False
@@ -2189,9 +2196,12 @@ class SettlementProcessor:
         self.calculate_total_demand_per_settlement(year, time_step)
 
     def calculate_unmet_demand(self, year, reliability=0.85):
-        if SET_GRID_RELIABILITY not in self.df or self.df[SET_GRID_RELIABILITY].empty:
+        if SET_GRID_RELIABILITY in self.df :
             self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
-            self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - reliability)
+                np.round(self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - self.df[SET_GRID_RELIABILITY]))
+        else:
+            self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
+                self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - reliability)
 
     @staticmethod
     def optimize_mini_grid(ghi_curve, temp, energy, tier, diesel_price, start_year, end_year,

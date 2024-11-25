@@ -41,7 +41,7 @@ elif choice == 2:
     specs_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\Specs.xlsx"
     specs = pd.read_excel(specs_path, index_col=0)
 
-    calibrated_csv_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\Calibrated.csv"
+    calibrated_csv_path = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\InputData_OnSSET\Inputs\CalibratedGR.csv"
 
     results_folder = r"C:\Users\renec\OneDrive\Documents\SEForALL\GitHub\Results"
 
