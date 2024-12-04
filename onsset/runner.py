@@ -18,7 +18,7 @@ try:
                               SPE_NUM_PEOPLE_PER_HH_RURAL,
                               SPE_NUM_PEOPLE_PER_HH_URBAN, SPE_POP, SPE_POP_FUTURE,
                               SPE_START_YEAR, SPE_URBAN, SPE_URBAN_FUTURE,
-                              SPE_URBAN_MODELLED)
+                              SPE_URBAN_MODELLED, SPE_COST_NON_SUPLIED_ENERGY)
 except ImportError:
     from specs import (SPE_COUNTRY, SPE_ELEC, SPE_ELEC_MODELLED,
                        SPE_ELEC_RURAL, SPE_ELEC_URBAN, SPE_END_YEAR,
@@ -27,7 +27,7 @@ except ImportError:
                        SPE_NUM_PEOPLE_PER_HH_RURAL,
                        SPE_NUM_PEOPLE_PER_HH_URBAN, SPE_POP, SPE_POP_FUTURE,
                        SPE_START_YEAR, SPE_URBAN, SPE_URBAN_FUTURE,
-                       SPE_URBAN_MODELLED)
+                       SPE_URBAN_MODELLED, SPE_COST_NON_SUPLIED_ENERGY)
 from openpyxl import load_workbook
 
 logging.basicConfig(format='%(asctime)s\t\t%(message)s', level=logging.DEBUG)
@@ -92,6 +92,11 @@ def calibration(specs_path, csv_path, specs_path_calib, calibrated_csv_path):
     specs_data['Buffer_used'] = elec_calibration_results[6]
     specs_data['buffer_distance'] = elec_calibration_results[7]
     specs_data['mg_pop_electrified'] = mg_pop_calib
+
+    if SPE_COST_NON_SUPLIED_ENERGY in specs_data.columns:
+        specs_data[SPE_COST_NON_SUPLIED_ENERGY]= specs_data.loc[0, SPE_COST_NON_SUPLIED_ENERGY] if not pd.isna(specs_data.loc[0, SPE_COST_NON_SUPLIED_ENERGY]) else 0
+    else:
+        specs_data[SPE_COST_NON_SUPLIED_ENERGY] = 0
 
     book = load_workbook(specs_path)
     with pd.ExcelWriter(specs_path_calib, engine='openpyxl') as writer:
@@ -229,7 +234,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                    grid_capacity_investment=grid_capacity_investment,
                                    grid_penalty_ratio=1,
                                    grid_price=grid_price,
-                                   discount_rate=grid_discount_rate)
+                                   discount_rate=grid_discount_rate,
+                                   cnse=float(specs_data.iloc[0].get(SPE_COST_NON_SUPLIED_ENERGY, 0)))
 
             mg_hydro_calc = Technology(om_of_td_lines=0.02,
                                        distribution_losses=0.05,
@@ -333,21 +339,24 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                 'full_life_cycles': 2000  # Equivalent full life-cycles of battery until replacement
             }
 
-            #Used to model LCOE for not-served-energy
-            mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,  # Deducted from curves
-                                        capacity_factor=0.7, #Typical for diesel generators
+            mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,
+                                        capacity_factor=0.7,
                                         tech_life=15,
                                         om_costs=0.1,
-                                        capital_cost=450,  # cost provided by FUNAE
-                                        efficiency=0.28, #Uset to calculated diesel usage
+                                        capital_cost=450,
+                                        efficiency=0.28,
                                         discount_rate=grid_discount_rate)
 
-            sa_diesel_calc = Technology(base_to_peak_load_ratio=0.9,
+            # Used to model LCOE for not-served-energy
+            sa_diesel_calc = Technology(base_to_peak_load_ratio=0.85,  # Deducted from curves
                                         capacity_factor=0.5,
                                         tech_life=10,
                                         om_costs=0.1,
-                                        capital_cost={float("inf"): 938},
+                                        capital_cost={float("inf"): 450}, # cost provided by FUNAE
+                                        efficiency=0.28, #Used to calculated diesel usage
+                                        discount_rate=grid_discount_rate,
                                         standalone=True)
+            #sa_diesel_calc =  {}
 
             sa_diesel_cost = {'diesel_price': diesel_price,
                               'efficiency': 0.28,
@@ -369,7 +378,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.calculate_demand(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
                                       urban_tier, rural_tier)
 
-            onsseter.calculate_unmet_demand(year, reliability=1)
+            onsseter.calculate_unmet_demand(year, reliability=0.963)
 
             onsseter.diesel_cost_columns(sa_diesel_cost, mg_diesel_cost, year)
 
@@ -402,15 +411,14 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             mg_hydro_investment, mg_hydro_capacity = onsseter.calculate_off_grid_lcoes(mg_hydro_calc, mg_wind_hybrid_calc,
                                                                                        sa_pv_calc,
                                                                                        mg_pv_hybrid_calc,
-                                                                                       mg_diesel_calc,
                                                                                        year, end_year, time_step,
                                                                                        techs, tech_codes, min_mg_size, 0)
 
             grid_investment, grid_capacity, grid_cap_gen_limit, grid_connect_limit = \
-                onsseter.pre_electrification(grid_price, year, time_step, end_year, grid_calc,
-                                             annual_grid_cap_gen_limit, annual_new_grid_connections_limit, mg_diesel_calc)
+                onsseter.pre_electrification(grid_price, year, time_step, end_year, grid_calc, sa_diesel_calc,
+                                             annual_grid_cap_gen_limit, annual_new_grid_connections_limit)
 
-            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc, mg_diesel_calc, max_auto_intensification_cost)
+            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc, sa_diesel_calc, max_auto_intensification_cost)
 
             onsseter.pre_selection(eleclimit, year, time_step, 2, auto_intensification)
 
@@ -418,7 +426,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.df[SET_LCOE_GRID + "{}".format(year)], onsseter.df[SET_MIN_GRID_DIST + "{}".format(year)], \
                 grid_investment, grid_capacity, x_coordinates, y_coordinates, new_lines_geojson[year] = \
                 onsseter.elec_extension_numba(grid_calc,
-                                              mg_diesel_calc,
+                                              sa_diesel_calc,
                                               max_grid_extension_dist,
                                               year,
                                               start_year,
