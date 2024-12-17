@@ -291,7 +291,12 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
 
             mg_interconnection = True  # True if mini-grids are allowed to be integrated into the grid, else False
             hybrid_lookup_table = True
-            min_mg_size = 250 # minimum number of people in settlement for mini-grids to be considered as an option
+            min_mg_size = 250  # minimum number of people in settlement for mini-grids to be considered as an option
+
+            grid_reliability_option = 'DieselBackup'  # Options: 'None', 'CNSE', 'DieselBackup'
+            # 'None' = No cost of unreliable grid considered
+            # 'CNSE' = Cost of Non-Served Energy for grid unreliability included in grid LCOE
+            # 'DieselBackup' = Diesel backup generators considered for grid reliability, included in LCOE, Investment
 
             mg_pv_hybrid_params = {
                 'min_mg_size_ppl': min_mg_size,
@@ -344,19 +349,18 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                         tech_life=15,
                                         om_costs=0.1,
                                         capital_cost=450,
-                                        efficiency=0.28,
-                                        discount_rate=grid_discount_rate)
+                                        efficiency=0.33,
+                                        discount_rate=mg_discount_rate)
 
-            # Used to model LCOE for not-served-energy
+            # Used to model LCOE for non-served-energy
             sa_diesel_calc = Technology(base_to_peak_load_ratio=0.85,  # Deducted from curves
                                         capacity_factor=0.5,
                                         tech_life=10,
                                         om_costs=0.1,
-                                        capital_cost={float("inf"): 450}, # cost provided by FUNAE
-                                        efficiency=0.28, #Used to calculated diesel usage
+                                        capital_cost={float("inf"): 928},
+                                        efficiency=0.28,
                                         discount_rate=grid_discount_rate,
                                         standalone=True)
-            #sa_diesel_calc =  {}
 
             sa_diesel_cost = {'diesel_price': diesel_price,
                               'efficiency': 0.28,
@@ -416,17 +420,19 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
 
             grid_investment, grid_capacity, grid_cap_gen_limit, grid_connect_limit = \
                 onsseter.pre_electrification(grid_price, year, time_step, end_year, grid_calc, sa_diesel_calc,
-                                             annual_grid_cap_gen_limit, annual_new_grid_connections_limit)
+                                             grid_reliability_option, annual_grid_cap_gen_limit,
+                                             annual_new_grid_connections_limit)
 
-            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc, sa_diesel_calc, max_auto_intensification_cost)
+            onsseter.max_extension_dist(year, time_step, end_year, start_year, grid_calc, sa_diesel_calc,
+                                        grid_reliability_option, max_auto_intensification_cost)
 
             onsseter.pre_selection(eleclimit, year, time_step, 2, auto_intensification)
-
 
             onsseter.df[SET_LCOE_GRID + "{}".format(year)], onsseter.df[SET_MIN_GRID_DIST + "{}".format(year)], \
                 grid_investment, grid_capacity, x_coordinates, y_coordinates, new_lines_geojson[year] = \
                 onsseter.elec_extension_numba(grid_calc,
                                               sa_diesel_calc,
+                                              grid_reliability_option,
                                               max_grid_extension_dist,
                                               year,
                                               start_year,
