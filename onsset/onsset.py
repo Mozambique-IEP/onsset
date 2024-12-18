@@ -106,10 +106,10 @@ SET_MIN_TD_DIST = 'minTDdist'
 SET_SA_DIESEL_FUEL = 'SADieselFuelCost'
 SET_MG_DIESEL_FUEL = 'MGDieselFuelCost'
 SET_MG_DIST = 'MGDist'
-SET_GRID_RELIABILITY = 'GridReliability' #To Calculate grid reliability
-SET_UNMET_DEMAND = 'UnmetDemand' #To Calculate grid reliability
+SET_GRID_RELIABILITY = 'GridReliability' # To Calculate grid reliability
+SET_UNMET_DEMAND = 'UnmetDemand' # To Calculate grid reliability
 SET_BACKUP_CAP = "BackupCap"
-SET_BACKUP_LCOE ="BackUpLCOE"
+SET_BACKUP_LCOE = "BackUpLCOE"
 
 # General
 LHV_DIESEL = 9.9445485  # (kWh/l) lower heating value
@@ -120,6 +120,50 @@ class Technology:
     """
     Used to define the parameters for each electricity access technology, and to calculate the LCOE depending on
     input parameters.
+
+    Attributes:
+        tech_life (int): The expected lifespan of the technology in years.
+        base_to_peak_load_ratio (float): The average ratio of base load to peak load.
+        distribution_losses (float): The percentage of energy lost during distribution.
+        connection_cost_per_hh (float): The cost to connect each household, in USD.
+        om_costs (float): Operating and maintenance costs as a percentage of capital costs.
+        capital_cost (dict): A dictionary representing the capital cost per kW (USD/kW),
+                            where the key is the capacity and the value is the cost.
+        capacity_factor (float): It is a ratio that measures how often the technology operates at its maximum power.
+                                It is used to size capacities in kW.
+        grid_penalty_ratio (float): A multiplier applied to the grid price to account for grid-related penalties.
+        efficiency (float): The efficiency of the technology expressed as a percentage.
+                            It is used to calculate Annual Energy Production (EAP).
+        diesel_price (float): The price of diesel fuel, in USD per litre.
+        grid_price (float): The price of grid electricity without including T&D, in USD per kWh.
+        standalone (bool): A flag indicating whether the technology is standalone.
+        mini_grid (bool): A flag indicating whether the technology is a mini-grid solution.
+        existing_grid_cost_ratio (float): The cost ratio associated with the existing grid infrastructure,
+        expressed as a percentage.
+        grid_capacity_investment (float): The investment cost for on-grid capacity (excluding the grid itself),
+                                        in USD per kW.
+        diesel_truck_consumption (float): The diesel consumption of a truck, in litres per hour.
+        diesel_truck_volume (float): The volume of diesel that can be carried by the truck, in litres.
+        om_of_td_lines (float): Operating and maintenance costs associated with transmission and distribution lines.
+        hybrid (bool): A flag indicating whether the technology is hybrid (for minigrids)
+        hybrid_investment (float): The investment cost associated with hybrid solutions, in USD.
+        hybrid_capacity (float): The capacity associated with hybrid solutions, in kW.
+        hybrid_fuel (float): The fuel consumption associated with hybrid technologies.
+        discount_rate (float): The discount rate used for financial calculations
+        cnse (float): The cost of non-served electricity in USD/kWH
+
+      Methods:
+        get_lcoe(): Calculates the Levelized Cost of Energy (LCOE) based on the parameters defined in the class.
+        get_lcoe_backup(): Calculates the Levelized Cost of Energy (LCOE) for a given technology i.e. Diesel Genset
+                        to cover non-served electricity
+        transmission_network(): This method calculates the required components for connecting the settlement
+                                Settlements can be connected to grid or a hydropower source
+                                This includes potentially HV lines, MV lines and substations
+        distribution_network(): Calculates the required components for connecting a settlement to an electricity
+                                network, which may involve high voltage (HV) lines, medium voltage (MV) lines,
+                                and substations.
+        td_network_cost(): Calculates all the transmission and distribution network components
+
     """
 
     def __init__(self,
@@ -172,7 +216,7 @@ class Technology:
         self.hybrid_capacity = hybrid_capacity
         self.hybrid_fuel = hybrid_fuel
         self.discount_rate = discount_rate
-        self.cnse=cnse
+        self.cnse = cnse
 
     @classmethod
     def set_default_values(cls, base_year, start_year, end_year, hv_line_type=69, hv_line_cost=53000,
@@ -188,7 +232,7 @@ class Technology:
         cls.end_year = end_year
 
         # RUN_PARAM: Here are the assumptions related to cost and physical properties of grid extension elements
-        #cls.discount_rate = discount_rate
+        # cls.discount_rate = discount_rate
         cls.hv_line_type = hv_line_type  # kV
         cls.hv_line_cost = hv_line_cost  # $/km for 69kV
         cls.mv_line_type = mv_line_type  # kV
@@ -214,10 +258,15 @@ class Technology:
                  capacity_factor=0.9, grid_penalty_ratio=1, fuel_cost=0, elec_loop=0,
                  productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False, fuel_cost_settlement=0,
                  grid_reliability_option='None'):
-        """Calculates the LCOE depending on the parameters.
+
+        """ Calculates the Levelized Cost of Energy (LCOE) based on various parameters related to electricity
+            supply technologies and demand for a given settlement. This method considers both
+            grid-extension and hybrid systems.
 
         Parameters
         ----------
+        energy_per_cell : float or pandas.Series
+            Annual energy demand in cell, excluding already met demand
         people : float or pandas.Series
             Number of people in settlement
         new_connections : float or pandas.Series
@@ -226,12 +275,14 @@ class Technology:
             Code representation of previous supply technology in settlement
         total_energy_per_cell : float or pandas.Series
             Total annual energy demand in cell, including already met demand
-        energy_per_cell : float or pandas.Series
-            Annual energy demand in cell, excluding already met demand
         num_people_per_hh : float or pandas.Series
             Number of people per household in settlement
         grid_cell_area : float or pandas.Series
             Area of settlement (km2)
+        sa_diesel_calc : An instance of the Technology class representing a diesel generator used as a backup to address
+            energy shortages. Default is an empty dictionary.
+        unmet_demand : float or panda.Series
+            Total annual energy not covered due to shortages
         additional_mv_line_length : float or pandas.Series
             Distance to connect the settlement
         additional_transformer : int
@@ -242,15 +293,33 @@ class Technology:
             Round of extension in grid extension algorithm
         penalty : float or pandas.Series
             Cost penalty factor for T&D network, e.g. https://www.mdpi.com/2071-1050/12/3/777
+        get_max_dist : Boolean
+        fuel_cost_settlement : float or pandas.Series
+            a factor which represents the cost of generating 1 kWh of electricity with diesel at the settlement
+        grid_reliability_option : Boolean
+            It allows to select scenarios where grid LCOE gets penalised due to grid reliability lesser than 100%.
         start_year : int
+            Starting year of analysis
         end_year : int
+            End year of analysis
         capacity_factor : float or pandas.Series
+
         grid_penalty_ratio : float or pandas.Series
+
         fuel_cost : float or pandas.Series
 
         Returns
         -------
-        lcoe or discounted investment cost
+        A tuple containing the following values:
+
+        lcoe : float
+            The Levelized Cost of Energy (LCOE) expressed in USD per kilowatt-hour (kWh).
+
+        investment_cost : float
+            The total discounted investment cost associated with the energy supply project, expressed in USD.
+
+        installed_capacity : float
+            The total installed capacity of the energy supply system, measured in kilowatts (kW).
         """
 
         if type(people) == int or type(people) == float or type(people) == np.float64:
@@ -393,6 +462,36 @@ class Technology:
 
     def get_lcoe_backup(self, project_life, step, people, num_people_per_hh, demand, unmet_demand, fuel_cost_settlement):
 
+        """This method estimates the total cost of energy generation from a diesel genset
+            considering capital costs, fuel costs, operation and maintenance costs,
+            and the potential salvage value at the end of the project life.
+
+            Parameters:
+            project_life : int
+                The total lifespan of the project in years.
+            step : int
+                The current time step in the project timeline.
+            people : float or pandas.Series
+                Number of people in the settlement.
+            num_people_per_hh : float or pandas.Series
+                Number of people per household in the settlement.
+            demand : float
+                Total energy demand in kWh.
+            unmet_demand : float or pandas.Series
+                Total annual energy not covered due to shortages.
+            fuel_cost_settlement : float or pandas.Series
+                A factor which represents the cost of generating 1 kWh with diesel.
+
+             Returns:
+                 tuple: A tuple containing:
+                     - total_diesel_genset (np.ndarray): The total cost of the diesel genset
+                       over the project life in USD.
+                     - discounted_total_diesel_genset (np.ndarray): The discounted total cost
+                       of the diesel genset over the project life in USD.
+                     - installed_capacity_diesel_genset (float): The installed capacity of
+                       the diesel generator in kW.
+                 """
+
         if type(unmet_demand) == int or type(unmet_demand) == float or type(unmet_demand) == np.float64:
             if unmet_demand == 0:
                 # If there is no demand, set the demand low (prevent div/0 error) and continue.
@@ -460,6 +559,7 @@ class Technology:
 
     def transmission_network(self, peak_load, additional_mv_line_length=0, additional_transformer=0,
                              mv_distribution=False):
+
         """This method calculates the required components for connecting the settlement
         Settlements can be connected to grid or a hydropower source
         This includes potentially HV lines, MV lines and substations
@@ -474,6 +574,25 @@ class Technology:
             If a transformer is needed on other end to connect to HV line
         mv_distribution : bool
             True if distribution network in settlement contains MV lines
+
+        Returns
+        -------
+        tuple
+            A tuple containing the following values:
+
+            hv_km : float
+                The calculated length of high voltage (HV) lines required for the connection, in kilometers (km).
+
+            mv_km : float
+                The calculated length of medium voltage (MV) lines required for the connection, in kilometers (km).
+
+            no_of_hv_mv_subs : int
+                The number of high voltage to medium voltage (HV/MV) substations required for the connection
+                based on the peak load and transformer requirements.
+
+            no_of_mv_lv_subs : int
+                The number of medium voltage to low voltage (MV/LV) substations required for the connection.
+                This value is currently calculated but not utilized in the function.
 
         Notes
         -----
@@ -510,8 +629,10 @@ class Technology:
 
     def distribution_network(self, people, energy_per_cell, num_people_per_hh, grid_cell_area,
                              productive_nodes=0):
-        """This method calculates the required components for the distribution network
-        This includes potentially MV lines, LV lines and service transformers
+
+        """Calculates the required components for connecting a settlement to an electricity network,
+        which may involve high voltage (HV) lines, medium voltage (MV) lines, and substations.
+
 
         Arguments
         ---------
@@ -525,6 +646,23 @@ class Technology:
             Area of settlement (km2)
         productive_nodes : int
             Additional connections (schools, health facilities, shops)
+
+            Returns
+        -------
+        tuple
+        A tuple containing:
+        - cluster_mv_lines_length : float
+            Length of medium voltage lines in kilometers.
+        - lv_km : float
+            Total length of low voltage lines in kilometers.
+        - no_of_service_transf : float
+            Number of service transformers required.
+        - consumption : float
+            Total annual energy consumption (kWh).
+        - peak_load : float
+            Peak load in kilowatts (kW).
+        - total_nodes : float
+            Total number of nodes in the settlement.
 
         Notes
         -----
@@ -602,6 +740,25 @@ class Technology:
             Round of extension in grid extension algorithm
         penalty : float
             Cost penalty factor for T&D network, e.g. https://www.mdpi.com/2071-1050/12/3/777
+
+        Returns
+        -------
+        generation_per_year : float
+            The total annual generation capacity required for the settlement.
+        peak_load : float
+            The maximum load expected in the settlement, accounting for new connections and demand.
+        td_investment_cost : float
+            The total investment cost for the T&D network, including the costs of lines, transformers, and connections.
+        hv_lines_total_length_cost : float
+            The total cost for the required HV lines based on their length and cost per kilometer.
+        mv_lines_distribution_length_cost : float
+            The total cost for the required MV lines based on their length and cost per kilometer.
+        total_lv_lines_length_cost : float
+            The total cost for the required LV lines based on their length and cost per kilometer.
+        num_transformers_cost : float
+            The total cost for the required transformers based on their quantity and cost per unit.
+        total_nodes_cost : float
+            The total cost for the connections made to households in the settlement.
         """
 
         # Start by calculating the distribution network required to meet all of the demand
@@ -747,22 +904,28 @@ class SettlementProcessor:
                                      efficiency: float):
         """We apply the Szabo formula to calculate the transport cost for the diesel
 
-        Formulae is::
+           Formulae are::
 
-            p = (p_d + 2*p_d*consumption*time/volume)*(1/mu)*(1/LHVd)
+               p = (p_d + 2*p_d*consumption*time/volume)*(1/mu)*(1/LHVd)
 
-        Arguments
-        ---------
-        diesel_price: float
-        diesel_truck_consumption: float
-        diesel_truck_volume: float
-        traveltime: numpy.ndarray
-        efficiency: float
+           Arguments
+           ---------
+           diesel_price: float
+               Price of diesel fuel.
+           diesel_truck_consumption: float
+               Consumption of diesel per truck.
+           diesel_truck_volume: float
+                Volume capacity of the diesel truck.
+           traveltime: numpy.ndarray
+               Array of travel times for transport.
+           efficiency: float
+               Efficiency of the transport process.
 
-        Returns
-        -------
-        numpy.ndarray
-        """
+           Returns
+           -------
+           numpy.ndarray
+           The calculated transport costs for diesel.
+           """
         return (diesel_price + 2 * diesel_price * diesel_truck_consumption *
                 traveltime / diesel_truck_volume) / LHV_DIESEL / efficiency
 
@@ -776,13 +939,18 @@ class SettlementProcessor:
         Arguments
         ---------
         dataframe: pandas.DataFrame
-        sa_diesel_cost: Dict
-        mg_diesel_cost: Dict
+        sa_diesel_cost: A dictionary containing cost parameters for standalone diesel calculations,
+                        including 'diesel_price', 'diesel_truck_volume', 'diesel_truck_consumption',
+                        and 'efficiency'.
+        mg_diesel_cost: A dictionary containing cost parameters for mini-grid diesel calculations,
+                        including 'diesel_price', 'diesel_truck_volume', 'diesel_truck_consumption',
+                        and 'efficiency'.
         year: int
 
         Returns
         -------
-        pandas.DataFrame
+        A DataFrame with the calculated diesel fuel costs for standalone and mini-grid systems,
+        with the travel hours column dropped.
         """
         df = dataframe.copy(deep=True)
         travel_time = df[SET_TRAVEL_HOURS].values
@@ -807,14 +975,22 @@ class SettlementProcessor:
                             mg_diesel_cost: Dict[str, float], year: int):
         """Calculate diesel fuel cost based on TravelHours column
 
-        Arguments
-        ---------
-        sa_diesel_cost: Dict
-        mg_diesel_cost: Dict
-        year: int
+            Arguments
+            ---------
+            sa_diesel_cost : Dict[str, float]
+                A dictionary containing cost parameters for standalone diesel calculations,
+                including 'diesel_price', 'diesel_truck_volume', 'diesel_truck_consumption',
+                and 'efficiency'.
+            mg_diesel_cost : Dict[str, float]
+                A dictionary containing cost parameters for mini-grid diesel calculations,
+                including 'diesel_price', 'diesel_truck_volume', 'diesel_truck_consumption',
+                and 'efficiency'.
+            year : int
+                The year for which the diesel costs are being calculated.
 
-        Returns
-        -------
+            Returns
+            -------
+            None
         """
         diesel_cost = self.compute_diesel_cost(self.df[[SET_TRAVEL_HOURS]],
                                                sa_diesel_cost, mg_diesel_cost, year)
@@ -822,6 +998,15 @@ class SettlementProcessor:
         self.df = self.df.join(diesel_cost)
 
     def conditioning(self):
+        """Cleans and prepares the DataFrame by handling null values and ensuring required columns are present.
+
+                 This method checks for null values in specific columns and fills them based on predefined rules.
+                 Missing columns are also handled by filling them with default values.
+
+                 Returns
+                 -------
+                 None
+        """
 
         columns = ['GridCellArea', 'Country', 'ElecPop', 'IsUrban', 'NightLights', 'Pop', 'id',
                    'GHI', 'TravelTime', 'WindVel', 'ResidentialDemandTierCustom',
@@ -903,9 +1088,9 @@ class SettlementProcessor:
     def classify_road_distance(road_distance):
         """Classify the road distance according to bins and labels
 
-        Arguments
-        ---------
-        road_distance : list
+               Arguments
+               ---------
+               road_distance : list
         """
         # Define bins
         road_distance_bins = [0, 5, 10, 25, 50, float("inf")]
@@ -918,9 +1103,9 @@ class SettlementProcessor:
     def classify_substation_distance(substation_distance):
         """Classify the substation distance according to bins and labels
 
-        Arguments
-        ---------
-        substation_distance : list
+          Arguments
+          ---------
+          substation_distance : list
         """
         # Define bins
         substation_distance_bins = [0, 0.5, 1, 5, 10, float("inf")]
@@ -933,9 +1118,9 @@ class SettlementProcessor:
     def classify_elevation(elevation):
         """Classify the elevation distance according to bins and labels
 
-        Arguments
-        ---------
-        elevation : list
+            Arguments
+            ---------
+            elevation : list
         """
 
         # Define bins
@@ -949,9 +1134,9 @@ class SettlementProcessor:
     def classify_slope(slope):
         """Classify the slope according to bins and labels
 
-        Arguments
-        ---------
-        slope : list
+              Arguments
+              ---------
+              slope : list
         """
 
         # Define bins
@@ -1024,6 +1209,29 @@ class SettlementProcessor:
 
     @staticmethod
     def calc_wind_cfs(wind_vel):
+        """Calculate the Capacity Factor (CF) for wind energy based on wind velocity.
+
+            The function calculates the Capacity Factor using the following parameters:
+            - Availability factor (mu): 0.97
+            - Total hours in a year (t): 8760
+            - Rated power of the wind turbine (p_rated): 600 kW
+            - Hub height (z): 55 meters
+            - Measurement height (zr): 80 meters
+            - Losses in wind electricity (es): 0.85
+
+            The function uses a Rayleigh distribution to estimate energy produced based on wind speed.
+
+            Parameters
+            ----------
+            wind_vel : np.ndarray
+                An array of wind velocities in meters per second.
+
+            Returns
+            -------
+            np.ndarray
+                An array of capacity factors corresponding to the input wind velocities.
+        """
+
         logging.info('Calculate Wind CF')
 
         mu = 0.97  # availability factor
@@ -1066,8 +1274,22 @@ class SettlementProcessor:
 
     def calibrate_current_pop_and_urban(self, pop_actual, urban_current):
         """
-        The function calibrates population values and urban/rural split (as estimated from GIS layers) based
-        on actual values provided by the user for the start year.
+           The function calibrates population values and urban/rural split (as estimated from GIS layers) based
+           on actual values provided by the user for the start year.
+
+           Parameters
+           ----------
+           pop_actual : float
+               The actual total population for the calibration year, as provided by the user.
+           urban_current : float
+               The actual proportion of the population classified as urban, as provided by the user.
+
+           Returns
+           -------
+            tuple
+           A tuple containing:
+           - pop_modelled: The calibrated total population.
+           - urban_modelled: The modelled urban proportion of the population.
         """
 
         logging.info('Population calibration process')
@@ -1104,6 +1326,24 @@ class SettlementProcessor:
     def project_pop_and_urban(self, pop_future, urban_future, start_year, years_of_analysis):
         """
         This function projects population and urban/rural ratio for the different years of the analysis
+
+        This function calculates yearly population growth for urban and rural areas
+        and updates the DataFrame with population values for each year of analysis.
+
+        Parameters
+        ----------
+        pop_future : float
+            Total projected population at the end of the analysis period.
+        urban_future : float
+            Projected urban population ratio at the end of the analysis period (0 to 1).
+        start_year : int
+            The base year from which the projections begin.
+        years_of_analysis : list[int]
+            List of years for which population projections are calculated.
+
+        Returns
+        -------
+        None
         """
         project_life = years_of_analysis[-1] - start_year
 
@@ -1133,7 +1373,50 @@ class SettlementProcessor:
                                     start_year, min_night_lights=0.05, min_pop=100, max_transformer_dist=2, max_mv_dist=3,
                                     max_hv_dist=5, buffer=False):
         """
-        Calibrate the current electrification status
+            Calibrate the current electrification status of settlements based on population, distance to grid
+            infrastructure, and other geospatial parameters.
+
+            Parameters:
+            -----------
+            grid_elec_current : float
+                Actual current percentage of electrified population (0 - 1)
+
+            grid_elec_current_urban : float
+                Urban electrification rate as a fraction (0 to 1) for the start year.
+
+            grid_elec_current_rural : float
+                Rural electrification rate as a fraction (0 to 1) for the start year.
+
+            start_year : int
+                The starting year for calibration.
+
+            min_night_lights : float, optional, default=0.05
+                Minimum night lights intensity for a settlement to be considered electrified.
+
+            min_pop : int, optional, default=100
+                Minimum population for a settlement to be considered in the electrification calibration.
+
+            max_transformer_dist : float, optional, default=2
+                Maximum distance (in km) from a transformer for a settlement to be considered electrified.
+
+            max_mv_dist : float, optional, default=3
+                Maximum distance (in km) from a medium voltage line for a settlement to be considered electrified.
+
+            max_hv_dist : float, optional, default=5
+                Maximum distance (in km) from a high voltage line for a settlement to be considered electrified.
+
+            buffer : bool, optional, default=False
+                Whether to apply an additional calibration step to include settlements near grid infrastructure
+                that were not initially considered electrified.
+
+            Returns:
+            --------
+            None
+                Modifies the input DataFrame `self.df` in place by updating the following columns:
+                - SET_ELEC_POP_CALIB: Adjusted population considered electrified.
+                - SET_ELEC_CURRENT: Binary indicator for electrification status (1 for electrified,
+                0 for not electrified).
+                - SET_CALIB_GRID_DIST: Calibrated distance to the nearest grid infrastructure.
         """
 
         self.df[SET_ELEC_POP_CALIB] = self.df[SET_ELEC_POP] * (self.df[SET_POP_CALIB].sum() / self.df[SET_POP].sum())
@@ -1379,6 +1662,30 @@ class SettlementProcessor:
                         mg_ntl=-1, # Night-time light threshold to consider a settlement mini-grid electrified, in combination with mg_dist. -1 means NTL is not required, 0 means all settlements with NTL within dist is electrified, and any higher value means a higher cut-off threshold
                         min_pop=400  ### Settlement population above which we can assume that it could be electrified
                         ):
+        """
+          Update the electrification status of settlements based on mini-grid proximity and other criteria.
+
+          Parameters
+          ----------
+          start_year : int
+              The year from which to start assessing electrification.
+          mg_dist : float, optional
+              The distance from existing mini-grids within which settlements are considered connected to the mini-grid.
+              Default is 1.
+          mg_ntl : int, optional
+              Night-time light threshold for considering a settlement electrified in combination with mg_dist.
+              A value of -1 means NTL is not required, 0 means all settlements with NTL within the distance are
+              electrified, and any higher value indicates a higher cut-off threshold. Default is -1.
+          min_pop : int, optional
+              The minimum population a settlement must have to be considered for electrification. Default is 400.
+
+          Returns
+          -------
+          float
+              The electrification rate of the modeled mini-grid settlements, calculated as the sum of
+              the population of electrified settlements divided by the total population.
+
+        """
 
         self.df.loc[
             (self.df[SET_ELEC_FINAL_CODE + '{}'.format(start_year)] != 1) & (self.df[SET_NIGHT_LIGHTS] > mg_ntl) &
@@ -1404,6 +1711,18 @@ class SettlementProcessor:
         return mg_pop
 
     def current_mv_line_dist(self):
+        """Calculate the current medium voltage (MV) line distance for electrified settlements.
+
+         This method updates the DataFrame with the current MV connection distance for each settlement,
+         setting it based on existing high voltage (HV) distances for those that are currently electrified.
+         It also calculates the minimum distance between planned MV and HV distances.
+
+         Returns
+         -------
+         None
+             This method modifies the instance's DataFrame to include current MV line distances and
+             the minimum transmission distance.
+         """
         logging.info('Determine current MV line length')
         self.df[SET_MV_CONNECT_DIST] = 0.
         self.df.loc[self.df[SET_ELEC_CURRENT] == 1, SET_MV_CONNECT_DIST] = self.df[SET_HV_DIST_CURRENT]
@@ -1412,7 +1731,43 @@ class SettlementProcessor:
     def pre_electrification(self, grid_price, year, time_step, end_year, grid_calc, sa_diesel_calc,
                             grid_reliability_option, grid_capacity_limit, grid_connect_limit):
 
-        """" ... """
+        """Define the initial electrification status and update grid-related parameters.
+
+            This method calculates the investment and capacity for grid-electrified settlements, while considering
+            restrictions on grid generation capacity and the number of households that can be connected.
+
+            Parameters
+            ----------
+            grid_price : float
+                The price of grid electricity for the specified year.
+            year : int
+                The current simulation year.
+            time_step : int
+                The time step interval in years.
+            end_year : int
+                The final year of the simulation.
+            grid_calc : object
+                Grid calculation instance containing grid-specific methods and attributes.
+            sa_diesel_calc : object
+                Stand-alone diesel calculation instance.
+            grid_reliability_option : float
+                The reliability adjustment factor for grid electrification.
+            grid_capacity_limit : float
+                The maximum allowable grid capacity to be added.
+            grid_connect_limit : float
+                The maximum allowable number of new grid connections.
+
+            Returns
+            -------
+            pd.Series
+                Series representing the grid investment for each settlement.
+            pd.Series
+                Series representing the grid capacity for each settlement.
+            float
+                Updated grid capacity limit after accounting for electrification.
+            float
+                Updated grid connection limit after accounting for densification.
+        """
 
         logging.info('Define the initial electrification status')
         grid_investment = np.zeros(len(self.df[SET_X_DEG]))
@@ -1451,6 +1806,48 @@ class SettlementProcessor:
 
     def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc, sa_diesel_calc,
                            grid_reliability_option, max_intensification_cost, min_load=0):
+        """
+            Calculate the maximum grid extension distance for each settlement to be connected to the grid
+            at a lower cost than the least-cost off-grid alternative.
+
+            Parameters:
+            -----------
+            year : int
+               The current year for the analysis.
+
+            time_step : int
+               The time interval (in years) for the model's iterations.
+
+           end_year : int
+               The end year for the analysis period.
+
+           start_year : int
+               The starting year of the analysis.
+
+           grid_calc : instance of technology class with grid attributes
+
+           sa_diesel_calc : instance of technology class with stand-alone attributes
+
+           grid_reliability_option : int
+               A parameter affecting grid reliability calculations.
+
+           max_intensification_cost : float
+               Maximum allowable cost for intensification (new connections within an existing grid service area).
+
+           min_load : float, optional, default=0
+               Minimum peak load (in kW) required for a settlement to be considered for grid extension.
+
+           Returns:
+           --------
+           None
+               Modifies the input DataFrame (`self.df`) in place by updating or adding the following columns:
+               - `MaxDist`: Maximum extension distance for each settlement in the current year.
+               - `MaxDist{year}`: Maximum extension distance for the specified year.
+               - `GridCapacityRequired`: Required grid capacity for the settlement.
+               - `GridCapacityRequired{year}`: Required grid capacity for the settlement in the specified year.
+               - `MaxIntensificationDist`: Maximum intensification distance for new connections within
+                the existing grid.
+        """
 
         # Calculate max extension for each settlement to be connected to the grid at
         # a lower cost than least-cost off-grid alternative
@@ -1505,18 +1902,71 @@ class SettlementProcessor:
 
     @staticmethod
     def start_extension_points(mv_lines_path, index_parts=True):
+        """
+           Interpolates points along LineString geometries from a GeoJSON file and returns the x and y coordinates.
+
+           Parameters:
+           -----------
+           mv_lines_path : str
+               The file path to the GeoJSON containing LineString geometries (e.g., MV lines).
+
+           index_parts : bool, optional, default=True
+            Whether to retain MultiLineString geometries as separate parts when exploding
+            them into individual LineString geometries.
+
+            Returns:
+            --------
+            tuple of numpy.ndarray
+            A tuple containing two numpy arrays:
+            - `x_array`: An array of x-coordinates of the interpolated and original points.
+            - `y_array`: An array of y-coordinates of the interpolated and original points.
+        """
         # Function to interpolate points along a LineString
 
         data = gpd.read_file(mv_lines_path)
         data = data.to_crs(3395)
 
         def interpolate_points(line, distance):
+            """Interpolate points along a LineString at a specified distance interval.
+
+             This function generates a list of points along the input LineString, spaced
+             evenly by the given distance. The starting point of the LineString is included,
+             and additional points are interpolated until the total length of the line is covered.
+
+             Parameters
+             ----------
+             line_input : shapely.geometry.LineString
+                 The input LineString along which points will be interpolated.
+             distance_input : float
+                 The distance interval between consecutive points.
+
+             Returns
+             -------
+             list of shapely.geometry.Point
+                 A list of points interpolated along the LineString.
+             """
             num_vertices = int(line.length / distance) + 1
             points = [line.interpolate(i * distance) for i in range(num_vertices)]
             return points
 
         # Function to convert a coordinate to Point geometry
         def coords_to_points(coords):
+            """Convert a list of coordinate tuples to a list of shapely Point objects.
+
+            This function takes a list of (x, y) or (x, y, z) coordinate tuples and
+            converts each tuple into a shapely.geometry.Point object.
+
+            Parameters
+            ----------
+            coords : list of tuple
+                A list of coordinate tuples representing points. Each tuple can be
+                either 2D (x, y) or 3D (x, y, z).
+
+            Returns
+            -------
+            list of shapely.geometry.Point
+                A list of Point objects created from the input coordinates.
+            """
             return [Point(coord) for coord in coords]
 
         # Define the target distance for interpolation (500 meters)
@@ -1577,6 +2027,58 @@ class SettlementProcessor:
                                  x_coordinates_iteration,
                                  y_coordinates_iteration,
                                  ):
+        """
+           Determine the electrification status of unelectrified settlements by
+           calculating their distances to the nearest grid-connected point and
+           updating grid capacity and connections.
+
+           Parameters:
+           ----------
+           unelectrified : List of identifiers for unelectrified settlements.
+           x_coordinates : ndarray
+               Array of x-coordinates of currently electrified points.
+           y_coordinates : ndarray
+               Array of y-coordinates of currently electrified points.
+           x_unelectrified : ndarray
+               Array of x-coordinates of unelectrified settlements.
+           y_unelectrified : ndarray
+               Array of y-coordinates of unelectrified settlements.
+           max_dist : ndarray
+               Maximum allowable connection distances for each unelectrified settlement.
+           new_connections : ndarray
+               Array of new connections required for each unelectrified settlement.
+           grid_connect_limit : float
+               Remaining capacity for new grid connections.
+           new_capacity : ndarray
+               Array of additional capacity requirements for each unelectrified settlement.
+           new_capacity_limit : float
+               Remaining capacity for the grid to handle additional demand.
+           x_coordinates_iteration : ndarray
+               X-coordinates of points to be iteratively considered during grid extension.
+           y_coordinates_iteration : ndarray
+               Y-coordinates of points to be iteratively considered during grid extension.
+
+           Returns:
+           -------
+           newly_electrified : List
+                Identifiers of settlements that were newly electrified.
+           newly_electrified_dist : list
+               Distances of newly electrified settlements to their nearest grid-connected point.
+           new_mv_line_coords : list of tuples
+               Coordinates of medium-voltage lines connecting newly electrified settlements.
+           x_coordinates : ndarray
+               Updated x-coordinates of electrified points.
+           y_coordinates : ndarray
+               Updated y-coordinates of electrified points.
+           grid_connect_limit : float
+               Updated remaining capacity for new grid connections.
+           new_capacity_limit : float
+               Updated remaining capacity for the grid to handle additional demand.
+           new_x_coords : ndarray
+               X-coordinates of newly added points, including intermediate points.
+           new_y_coords : ndarray
+               Y-coordinates of newly added points, including intermediate points.
+        """
         newly_electrified = []
         newly_electrified_dist = []
         new_mv_line_coords = []
@@ -1641,6 +2143,27 @@ class SettlementProcessor:
             x_coordinates, y_coordinates, grid_connect_limit, new_capacity_limit, new_x_coords, new_y_coords
 
     def add_xy_3395(self):
+        """
+           Converts geographic coordinates (longitude and latitude) from degrees
+           to projected coordinates (X, Y) using the EPSG:3395 (World Mercator)
+           projection.
+
+           This function calculates the X and Y coordinates based on the following:
+           - The Earth's radius in meters (WGS 84).
+           - The flattening factor of the Earth.
+           - Conversion constants for converting degrees to radians and for
+             transforming longitude and latitude to X and Y coordinates.
+
+           It adds two new columns, 'X' and 'Y', to the DataFrame `self.df`
+           representing the projected coordinates.
+
+           Notes:
+           -----
+           - The longitude is converted to X using a simple multiplication with the
+             Earth's radius.
+           - The latitude is converted to Y using a logarithmic function accounting
+             for the Earth's flattening.
+        """
         # Earth's radius in meters (WGS 84)
         R = 6378137.0
         # Flattening factor of the Earth
@@ -1668,6 +2191,43 @@ class SettlementProcessor:
                              end_year, time_step, grid_capacity_limit, grid_connect_limit, x_coordinates, y_coordinates,
                              mg_interconnection, auto_intensification=0, prioritization=0, threshold=999999999):
 
+        """
+            Extends electricity grid connections to unelectrified settlements based on various parameters.
+            This method implements a grid extension algorithm that considers factors such as maximum distance,
+            grid reliability options, and prioritization. The extension process is executed in two main rounds:
+            1. The initial extension to connect settlements close to the grid.
+            2. An intensification round to further electrify remaining settlements based on their proximity and
+               available infrastructure.
+
+            Parameters:
+            -----------
+            - grid_calc: Instance technology with grid parameters
+            - sa_diesel_calc: Instance technology with stand-alone diesel parameters.
+            - grid_reliability_option: Options to ensure grid reliability during the extension.
+            - max_dist: The maximum distance allowed for grid extension.
+            - year: The current year of operation.
+            - start_year: The starting year for electrification planning.
+            - end_year: The end year for electrification planning.
+            - time_step: The time interval for operations.
+            - grid_capacity_limit: The limit on grid capacity for new connections.
+            - grid_connect_limit: The limit on the number of connections for grid extension.
+            - x_coordinates: List of x-coordinates for potential connections.
+            - y_coordinates: List of y-coordinates for potential connections.
+            - mg_interconnection: Flag indicating if mini-grid interconnections are allowed.
+            - auto_intensification: Auto-intensification option for settlements.
+            - prioritization: The level of prioritization for extensions.
+            - threshold: A threshold value for electrification status.
+
+            Returns:
+            --------
+            - grid_lcoe: Levelized cost of electricity for the extended grid.
+            - NewDist: Series of new distances for electrified settlements.
+            - grid_investment: DataFrame of grid investment costs for the new connections.
+            - grid_capacity: DataFrame of grid capacity for the new connections.
+            - x_coordinates: Updated list of x-coordinates after grid extension.
+            - y_coordinates: Updated list of y-coordinates after grid extension.
+            - feature_collection: GeoJSON FeatureCollection of new lines created during the extension.
+        """
         # print('Starting', time.ctime())
 
         prio = int(prioritization)
@@ -1851,6 +2411,61 @@ class SettlementProcessor:
 
     def get_grid_lcoe(self, dist_adjusted, elecorder, additional_transformer, year, time_step, end_year, grid_calc,
                       sa_diesel_calc, grid_reliability_option, get_max_dist=False):
+        """
+            Calculate the Levelized Cost of Energy (LCOE) and related financial metrics for the electricity grid.
+
+            This function retrieves the LCOE and associated metrics based on various inputs related to the grid's
+            performance, demand, and configuration, allowing for both standard and maximum distance calculations.
+
+            Parameters
+            ----------
+            dist_adjusted : float
+                The adjusted distance for additional medium voltage line lengths.
+
+            elecorder : any
+                The electrical order related to the electrification process.
+
+            additional_transformer : int
+                The number of additional transformers required for the electrification.
+
+            year : int
+                The current year for which the LCOE is being calculated.
+
+            time_step : int
+                The time step used for the LCOE calculation, representing the interval (e.g., years).
+
+            end_year : int
+                The final year up to which the LCOE calculation is performed.
+
+            grid_calc : object
+                Instance technology class with grid attributes.
+
+            sa_diesel_calc : any
+                Instance technology class with stand-alone diesel attributes.
+
+            grid_reliability_option = Options: 'None', 'CNSE', 'DieselBackup'
+                'None' = No cost of unreliable grid considered
+                'CNSE' = Cost of Non-Served Energy for grid unreliability included in grid LCOE
+                'DieselBackup' = Diesel backup generators considered for grid reliability, included in LCOE, Investment
+
+            get_max_dist : bool, optional
+                A flag indicating whether to return maximum distances as part of the output. Default is False.
+
+            Returns
+            -------
+            tuple
+                If `get_max_dist` is True, returns a tuple containing:
+                - LCOE (float): The levelized cost of energy.
+                - Investment cost (float): The investment cost associated with the electrification.
+                - Capacity (float): The capacity metric of the grid.
+                - Maximum distance (float): The maximum distance related to the electrification process.
+
+                If `get_max_dist` is False, returns a tuple containing:
+                - LCOE (float): The levelized cost of energy.
+                - Investment cost (float): The investment cost associated with the electrification.
+                - Capacity (float): The capacity metric of the grid.
+        """
+
         grid = \
             grid_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
                                start_year=year - time_step,
@@ -1879,6 +2494,37 @@ class SettlementProcessor:
 
     def closest_electrified_settlement(self, new_electrified, unelectrified, cell_path_real, grid_penalty_ratio,
                                        elecorder):
+        """Find the closest electrified settlement for unelectrified settlements.
+
+            This function identifies the nearest electrified settlement for each unelectrified settlement
+            and calculates related metrics such as distance and electrification order.
+
+            Parameters
+            ----------
+            new_electrified : np.ndarray
+                Array indicating newly electrified settlements.
+            unelectrified : list
+                List of unelectrified settlement indices.
+            cell_path_real : np.ndarray
+                Array of real path distances to electrified settlements.
+            grid_penalty_ratio : float
+                Penalty factor applied to grid extension distances.
+            elecorder : np.ndarray
+                Array representing the electrification order of settlements.
+
+            Returns
+            -------
+            tuple
+                A tuple containing:
+                - nearest_dist_adjusted : np.ndarray
+                    Adjusted distances to the closest electrified settlements, including grid penalty.
+                - nearest_elec_order : np.ndarray
+                    Electrification order for each unelectrified settlement.
+                - prev_dist : np.ndarray
+                    Real path distances up to the electrified settlement.
+                - nearest_dist : np.ndarray
+                    Unadjusted distances to the closest electrified settlements.
+        """
 
         x = self.df[SET_X_DEG].copy(deep=True)
         y = self.df[SET_Y_DEG].copy(deep=True)
@@ -1928,6 +2574,40 @@ class SettlementProcessor:
                                    max_dist, new_lcoes, grid_capacity_limit, grid_connect_limit, cell_path_real,
                                    cell_path_adjusted, electrified, year, grid_calc, grid_investment, new_investment,
                                    grid_capacity, new_capacity, threshold=999999999):
+        """
+            Find the closest electrified settlements for a given set of unelectrified settlements.
+
+            This function calculates the nearest electrified settlement for each unelectrified settlement,
+            taking into account distances and grid penalties. It returns the adjusted distances, electrification order,
+            previous distances, and unadjusted distances.
+
+            Parameters
+            ----------
+            new_electrified : array-like
+                A binary array indicating which settlements are electrified (1) or unelectrified (0).
+
+            unelectrified : array-like
+                An array of indices representing unelectrified settlements.
+
+            cell_path_real : array-like
+                An array representing the actual path lengths to the nearest electrified settlements.
+
+            grid_penalty_ratio : float
+                A ratio that applies a penalty to distances based on grid characteristics.
+
+            elecorder : array-like
+                An array that represents the electrification order of the electrified settlements.
+
+            Returns
+            -------
+            tuple
+                A tuple containing:
+                - nearest_dist_adjusted (np.ndarray): The distances to the closest electrified settlements,
+                  adjusted by the grid penalty ratio.
+                - nearest_elec_order (np.ndarray): The electrification order for the nearest electrified settlements.
+                - prev_dist (np.ndarray): The previous distances to the nearest electrified settlements.
+                - nearest_dist (np.ndarray): The unadjusted distances to the closest electrified settlements.
+        """
 
         min_code_lcoes = self.df[SET_MIN_OFFGRID_LCOE + "{}".format(year)].copy(deep=True)
 
@@ -1969,8 +2649,29 @@ class SettlementProcessor:
 
     @staticmethod
     def haversine_vector(lon1, lat1, lon2, lat2):
-        """Calculate the great circle distance between two points
-        on the earth (specified in decimal degrees)
+        """
+            This function computes the distance between two geographic points specified by their longitude and latitude
+            using the Haversine formula, which accounts for the spherical shape of the Earth.
+
+            Parameters
+            ----------
+            lon1 : array-like
+                Longitude of the first set of points in decimal degrees.
+
+            lat1 : array-like
+                Latitude of the first set of points in decimal degrees.
+
+            lon2 : array-like
+                Longitude of the second set of points in decimal degrees.
+
+            lat2 : array-like
+                Latitude of the second set of points in decimal degrees.
+
+            Returns
+            -------
+            numpy.ndarray
+                An array containing the distances between the corresponding pairs of points
+                in kilometers.
         """
         # convert decimal degrees to radians
         lon1, lat1, lon2, lat2 = map(np.deg2rad, [lon1, lat1, lon2, lat2])
@@ -1983,6 +2684,24 @@ class SettlementProcessor:
 
     @staticmethod
     def do_kdtree(combined_x_y_arrays, points):
+        """
+            Find the nearest neighbors of points using a k-d tree.
+
+            Parameters
+            ----------
+            combined_x_y_arrays : array-like
+                A 2D array or list of shape (n, 2) containing the x and y coordinates of
+                the points from which to search for nearest neighbors.
+
+            points : array-like
+                A 2D array or list of shape (m, 2) containing the x and y coordinates
+                of the points for which nearest neighbors are to be found.
+
+            Returns
+            -------
+            numpy.ndarray
+                An array of indexes corresponding to the nearest points in the combined_x_y_arrays.
+        """
         mytree = scipy.spatial.cKDTree(combined_x_y_arrays)
         dist, indexes = mytree.query(points)
         return indexes
@@ -2023,9 +2742,15 @@ class SettlementProcessor:
         Arguments
         ---------
         rural_tier : int
+            The tier level for rural areas.
         urban_tier : int
-        num_people_per_hh_rural : float
-        num_people_per_hh_urban : float
+            The tier level for urban areas.
+
+        Returns
+        -------
+        None
+            The method modifies the internal DataFrame by setting the household demand and
+            tier level for each settlement based on the specified tier levels.
         """
 
         logging.info('Setting electrification demand as per target per year')
@@ -2080,6 +2805,17 @@ class SettlementProcessor:
         Arguments
         ---------
         year : int
+            The target year for which the total demand is being calculated.
+
+        time_step : int
+            The time step used to refer to the previous year's electrification code,
+            which influences demand calculations.
+
+        Returns
+        -------
+        None
+            The method updates the internal DataFrame with the calculated total energy demand
+            for each settlement.
 
         """
 
@@ -2120,14 +2856,27 @@ class SettlementProcessor:
         Arguments
         ---------
         year : int
+            The target year for which the demand calculations are performed
         num_people_per_hh_rural : float
+            The average number of people per household in rural areas.
         num_people_per_hh_urban : float
+            The average number of people per household in urban areas.
         time_step : int
-        start_year: int
+             The time step used for calculating the difference in population and connections from the previous year.
+
         urban_tier : int
+            The tier level representing urban demand characteristics.
         rural_tier : int
-        end_year_pop : int
-        productive_demand : int
+            The tier level representing rural demand characteristics.
+
+        moz : Bool
+             A flag indicating whether to apply specific Mozambique settings. Defaults to False.
+
+        Returns
+        -------
+        None
+            The method updates the internal DataFrame with new connections, residential demand, and total demand
+            based on the provided parameters.
 
         """
 
@@ -2136,6 +2885,23 @@ class SettlementProcessor:
         self.calculate_total_demand_per_settlement(year, time_step)
 
     def calculate_unmet_demand(self, year, reliability=0.963):
+        """
+         Calculate the unmet energy demand for a specified year based on total demand and grid reliability.
+
+         Parameters
+         ----------
+         year : int
+             The target year for which unmet demand is calculated.
+
+         reliability : float, optional
+             The assumed reliability of the grid if not specified in the DataFrame. Defaults to 0.963.
+
+         Returns
+         -------
+         None
+             The method updates the internal DataFrame with the calculated unmet demand for the specified year.
+
+         """
         if SET_GRID_RELIABILITY in self.df :
             self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
                 self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - self.df[SET_GRID_RELIABILITY])
@@ -2146,6 +2912,57 @@ class SettlementProcessor:
     @staticmethod
     def optimize_mini_grid(ghi_curve, temp, energy, tier, diesel_price, start_year, end_year,
                            year, time_step, mg_pv_hybrid_specs):
+        """
+            Optimize a mini-grid system design using Particle Swarm Optimization (PSO) to
+            minimize Levelized Cost of Energy (LCOE).
+
+            This function calculates the optimal configuration for a hybrid mini-grid system consisting of
+            solar photovoltaic (PV) panels, batteries, and diesel generators based on hourly Global Horizontal
+            Irradiance (GHI), temperature, and energy demand. It returns the optimal system parameters and
+            associated costs.
+
+            Parameters
+            ----------
+            ghi_curve : numpy.ndarray
+                An array representing the hourly Global Horizontal Irradiance (GHI) values over a year.
+
+            temp : numpy.ndarray
+                An array representing the hourly temperature values over a year.
+
+            energy : float
+                The total energy demand for the mini-grid, typically expressed in kWh.
+
+            tier : int
+                The tier level indicating the energy access level for the community served by the mini-grid.
+
+            diesel_price : float
+                The price of diesel fuel, used to calculate costs associated with diesel generators.
+
+            start_year : int
+                The starting year for the analysis.
+
+            end_year : int
+                The ending year for the analysis.
+
+            year : int
+                The target year for which the optimization is performed.
+
+            time_step : int
+                The time step used in the calculations, typically expressed in years.
+
+            mg_pv_hybrid_specs : dict
+                A instance from the technology class containing specifications and parameters for the mini-grid system
+
+            Returns
+            -------
+            tuple
+                A tuple containing the following elements:
+                - result[0]: The optimized LCOE
+                - result[1]: Investments
+                - result[2] : Capacity
+                - result[3]: Cost of fuel
+
+        """
 
         load_curve = calc_load_curve(tier, energy)
 
@@ -2232,6 +3049,43 @@ class SettlementProcessor:
         return result[0], result[3], result[8] + result[9], result[4]
 
     def pv_hybrids_lcoe(self, year, time_step, end_year, mg_pv_hybrid_specs, pv_folder_path=r'../test_data'):
+        """
+            Calculate the Levelized Cost of Energy (LCOE) for a hybrid photovoltaic (PV) system.
+
+            This method estimates the LCOE for hybrid PV systems based on environmental data, energy demand,
+            and various hybrid system specifications. It applies optimization to determine the optimal configuration
+            for mini-grids and calculates associated costs.
+
+            Parameters
+            ----------
+            year : int
+                The target year for which the LCOE is calculated.
+
+            time_step : int
+                The time step used in the calculations, typically expressed in years.
+
+            end_year : int
+                The ending year for the analysis.
+
+            mg_pv_hybrid_specs : dict
+                A dictionary containing specifications and parameters for the hybrid mini-grid system, including:
+                - 'min_mg_size_ppl': Minimum population size required to consider a mini-grid.
+
+            pv_folder_path : str, optional
+                The path to the folder containing PV data files. Default is '../test_data'.
+
+            Returns
+            -------
+            tuple
+                A tuple containing the following elements:
+                - hybrid_lcoe : pandas.Series
+                    The calculated Levelized Cost of Energy for the hybrid systems.
+                - hybrid_capacity : pandas.Series
+                    The capacity of the hybrid systems.
+                - hybrid_investment : pandas.Series
+                    The investment cost associated with the hybrid systems.
+
+        """
         logging.info('Starting hybrid gen lcoe')
 
         self.df['PVHybridGenLCOE' + "{}".format(year)] = 0.
@@ -2274,6 +3128,37 @@ class SettlementProcessor:
         return hybrid_lcoe, hybrid_capacity, hybrid_investment
 
     def pv_hybrids_lcoe_lookuptable(self, year, time_step, end_year, mg_pv_hybrid_specs, pv_path=r'../test_data'):
+        """
+            Generate a lookup table for the Levelized Cost of Energy (LCOE) of hybrid photovoltaic (PV) systems.
+
+            This method calculates the LCOE for different configurations of hybrid PV systems based on varying
+            levels of Global Horizontal Irradiance (GHI) and diesel fuel costs. It compiles results into a lookup table
+            for different tiers of service.
+
+            Parameters
+            ----------
+            year : int
+                The target year for which the LCOE is calculated.
+
+            time_step : int
+                The time step used in the calculations, typically expressed in years.
+
+            end_year : int
+                The ending year for the analysis.
+
+            mg_pv_hybrid_specs : dict
+                A dictionary containing specifications and parameters for the hybrid mini-grid system, including:
+                - 'min_mg_size_ppl': Minimum population size required to consider a mini-grid.
+
+            pv_path : str, optional
+                The path to the folder containing PV data files. Default is '../test_data'.
+
+            Returns
+            -------
+            None
+                The method updates the instance's data frame with calculated LCOE values and other metrics.
+
+        """
         logging.info('Starting hybrid gen lcoe')
         # lats = sorted(self.df['Y_deg'].round().unique())
         # longs = sorted(self.df['X_deg'].round().unique())
@@ -2317,13 +3202,50 @@ class SettlementProcessor:
                     pv_hybrid_fuel_cost[t, g, d] = fuel_cost
 
         def local_hybrid(ghi, diesel, tier, energy):
+            """
+                Calculate the Levelized Cost of Energy (LCOE) and related metrics for local hybrid systems based on
+                Global Horizontal Irradiance (GHI) and diesel fuel cost.
+
+                This function retrieves the LCOE, investment, capacity, and fuel cost for a specified hybrid
+                configuration given the GHI, diesel price, service tier, and energy demand. The function uses
+                 pre-computed lookup tables to provide these values.
+
+                Parameters
+                ----------
+                ghi : float
+                    The Global Horizontal Irradiance value, which represents solar energy received on a horizontal
+                    surface.
+
+                diesel : float
+                    The cost of diesel fuel, rounded to the nearest tenth for matching with pre-computed values.
+
+                tier : int
+                    The service tier level for which the metrics are being calculated (1 to 5).
+
+                energy : float
+                    The energy demand, which may influence the scaling of investment and capacity values.
+
+                Returns
+                -------
+                tuple
+                    A tuple containing:
+                    - hybrid_lcoe : float
+                        The calculated Levelized Cost of Energy for the local hybrid system.
+                    - hybrid_investment : float
+                        The investment cost associated with the local hybrid system.
+                    - hybrid_capacity : float
+                        The capacity of the local hybrid system.
+                    - hybrid_fuel_cost : float
+                        The fuel cost associated with the local hybrid system.
+
+            """
             ghi = round(ghi, -2)
             diesel = round(diesel, 1)
 
             hybrid_lcoe = pv_hybrids_lcoe[tier, ghi, diesel]
-            hybrid_investment = pv_hybrid_investment[tier, ghi, diesel] #* (energy / 10000)
-            hybrid_capacity = pv_hybrid_capacity[tier, ghi, diesel] #* (energy / 10000)
-            hybrid_fuel_cost = pv_hybrid_fuel_cost[tier, ghi, diesel] #* (energy / 10000)
+            hybrid_investment = pv_hybrid_investment[tier, ghi, diesel] # * (energy / 10000)
+            hybrid_capacity = pv_hybrid_capacity[tier, ghi, diesel] # * (energy / 10000)
+            hybrid_fuel_cost = pv_hybrid_fuel_cost[tier, ghi, diesel] # * (energy / 10000)
 
             return hybrid_lcoe, hybrid_investment, hybrid_capacity, hybrid_fuel_cost
 
@@ -2357,6 +3279,51 @@ class SettlementProcessor:
     @staticmethod
     def optimize_wind_mini_grid(wind_curve, energy, tier, diesel_price, start_year, end_year,
                                 year, time_step, mg_wind_hybrid_specs):
+        """
+          Optimize the configuration of a wind mini-grid system to minimize costs while meeting energy demand.
+
+          This function determines the optimal configuration for a mini-grid that combines wind energy,
+          battery storage, and diesel backup.
+          It calculates the least-cost solution based on various input parameters, including wind energy
+          availability, energy demand, and the costs associated with different system components.
+
+          Parameters
+          ----------
+          wind_curve: np.ndarray
+              An array representing the wind velocity
+
+          energy : float
+              The total energy demand that the mini-grid must meet.
+
+          tier : int
+              The service tier level for which the mini-grid is being optimized (1 to 5).
+
+          diesel_price : float
+              The price of diesel fuel, which affects the operational costs of the diesel generator.
+
+          start_year : int
+              The starting year for the optimization period.
+
+          end_year : int
+              The ending year for the optimization period.
+
+          year : int
+              The current year within the optimization timeframe.
+
+          time_step : int
+              The time step (in years) used in the optimization process.
+
+          mg_wind_hybrid_specs : Instance class
+              Technology class with wind-diesel attributes
+
+          Returns
+          -------
+          result_wind : tuple
+              A tuple containing the results of the optimization, which may include:
+              - The least-cost configuration for the mini-grid.
+              - Performance metrics such as Levelized Cost of Energy (LCOE) and other financial indicators.
+
+        """
 
         load_curve = calc_load_curve(tier, energy)
 
@@ -2437,6 +3404,32 @@ class SettlementProcessor:
         return result[0], result[3], result[8] + result[9], result[4]
 
     def wind_hybrids_lcoe(self, year, time_step, end_year, mg_wind_hybrid_specs, wind_folder_path=r'../test_data'):
+        """
+            Calculates the Levelized Cost of Energy (LCOE) for wind-hybrid mini-grids for a specific year.
+
+            Parameters
+            ----------
+            year : int
+                The current year of the simulation.
+            time_step : int
+                The time step used in the simulation.
+            end_year : int
+                The final year of the simulation.
+            mg_wind_hybrid_specs : dict
+                Specifications for wind-hybrid mini-grids, including thresholds like minimum population size.
+            wind_folder_path : str, optional
+                Path to the folder containing wind environmental data. Default is '../test_data'.
+
+            Returns
+            -------
+            tuple
+                - hybrid_lcoe : pd.Series
+                    LCOE values for wind-hybrid mini-grids.
+                - hybrid_capacity : pd.Series
+                    Capacities of the wind-hybrid mini-grids.
+                - hybrid_investment : pd.Series
+                    Investment costs of the wind-hybrid mini-grids.
+        """
         logging.info('Starting hybrid gen lcoe')
 
         self.df['windHybridGenLCOE' + "{}".format(year)] = 0.
@@ -2478,6 +3471,42 @@ class SettlementProcessor:
         return hybrid_lcoe, hybrid_capacity, hybrid_investment
 
     def wind_hybrids_lcoe_lookuptable(self, year, time_step, end_year, mg_wind_hybrid_specs, wind_path=r'../test_data'):
+        """
+            Calculate the Levelized Cost of Energy (LCOE) for a hybrid wind mini-grid system.
+
+            This method estimates the LCOE for a mini-grid that combines wind energy generation with other energy
+            sources. It evaluates each potential mini-grid site based on wind velocity, energy demand, and other
+            specified parameters to determine the financial viability of deploying a wind hybrid system.
+
+            Parameters
+            ----------
+            year : int
+                The current year for which LCOE is being calculated.
+
+            time_step : int
+                The time step in years used for historical data reference.
+
+            end_year : int
+                The end year for the analysis period.
+
+            mg_wind_hybrid_specs : dict
+                An instance class for the wind mini-grid hybrid attributes.
+
+            wind_path : str, optional
+                The path to the folder containing wind data files.
+
+            Returns
+            -------
+            hybrid_lcoe : pd.Series
+                A Series containing the calculated LCOE for the wind hybrid mini-grid across all evaluated sites.
+
+            hybrid_capacity : pd.Series
+                A Series containing the capacity of the hybrid system for each evaluated site.
+
+            hybrid_investment : pd.Series
+                A Series containing the total investment costs associated with the hybrid systems for each site.
+
+        """
         logging.info('Starting wind hybrid gen lcoe')
         # lats = sorted(self.df['Y_deg'].round().unique())
         # longs = sorted(self.df['X_deg'].round().unique())
@@ -2520,6 +3549,32 @@ class SettlementProcessor:
                     wind_hybrid_fuel_cost[t, g, d] = fuel_cost
 
         def local_hybrid(wind, diesel, tier, energy):
+            """
+               Computes the hybrid system metrics for given wind speed, diesel cost, tier, and energy demand.
+
+               Parameters
+               ----------
+               wind : float
+                   Wind speed value.
+               diesel : float
+                   Diesel cost.
+               tier : int
+                   Energy tier (e.g., household electrification level).
+               energy : float
+                   Energy demand.
+
+               Returns
+               -------
+               tuple
+                   - hybrid_lcoe_wind : float
+                       LCOE for the hybrid wind system.
+                   - hybrid_investment_wind : float
+                       Investment cost for the hybrid wind system.
+                   - hybrid_capacity_wind : float
+                       Capacity of the hybrid wind system.
+                   - hybrid_fuel_cost : float
+                       Fuel cost for the hybrid wind system.
+            """
             wind = round(wind)
             diesel = round(diesel, 1)
 
@@ -2560,7 +3615,62 @@ class SettlementProcessor:
     def calculate_off_grid_lcoes(self, mg_hydro_calc, mg_wind_hybrid_calc, sa_pv_calc,  mg_pv_hybrid_calc, year, end_year, time_step, techs, tech_codes,
                                  min_mg_size=0, mg_min_grid_dist=0, diesel_techs=0):  # mg_diesel_calc, sa_diesel_calc,
         """
-        Calculate the LCOEs for all off-grid technologies
+        Calculate the Levelized Cost of Energy (LCOE) for various off-grid technologies over a specified period.
+
+        This function computes the LCOE for different off-grid technologies, including standalone diesel,
+        standalone photovoltaic (PV), minigrid diesel, minigrid PV hybrid, minigrid wind, and minigrid hydro.
+
+        Parameters:
+            mg_hydro_calc (object):
+                An instance of a class with minigrid hydro attributes.
+
+            mg_wind_hybrid_calc (object):
+                An instance of a class with minigrid wind hybrid attributes
+
+            sa_pv_calc (object):
+                An instance of a class with stand-alone PV attributes
+
+            mg_pv_hybrid_calc (object):
+                An instance of a class with minigrid PV hybrid attributes.
+            year (int):
+                The starting year for which the LCOE calculations are to be performed.
+
+            end_year (int):
+                The final year for the LCOE calculation.
+
+            time_step (int):
+                The time interval (in years) for the calculations.
+
+            techs (list of str):
+                A list of technology names (e.g., ['diesel', 'pv', 'hybrid'])
+
+            tech_codes (list of str):
+                A list of corresponding codes for the technologies specified in the `techs` parameter.
+
+            min_mg_size (float, optional):
+                Minimum number of people in settlement for mini-grids to be considered as an option
+
+            mg_min_grid_dist (float, optional):
+                The minimum grid distance (in kilometers) for which minigrid connections are considered.
+
+            diesel_techs (int, optional):
+                A flag indicating the presence of diesel technologies. Default is 0.
+
+        Returns:
+            tuple: A tuple containing the following values for each technology:
+                - sa_diesel_investment (float): Total investment cost for standalone diesel technology
+                - sa_diesel_capacity (float): Total capacity (in kW) for standalone diesel technology.
+                - sa_pv_investment (float): Total investment cost for standalone PV technology
+                - sa_pv_capacity (float): Total capacity (in kW) for standalone PV technology.
+                - mg_diesel_investment (float): Total investment cost for minigrid diesel technology
+                - mg_diesel_capacity (float): Total capacity (in kW) for minigrid diesel technology.
+                - mg_pv_hybrid_investment (float): Total investment cost for minigrid PV hybrid technology
+                - mg_pv_hybrid_capacity (float): Total capacity (in kW) for minigrid PV hybrid technology.
+                - mg_wind_investment (float): Total investment cost for minigrid wind technology
+                - mg_wind_capacity (float): Total capacity (in kW) for minigrid wind technology.
+                - mg_hydro_investment (float): Total investment cost for minigrid hydro technology
+                - mg_hydro_capacity (float): Total capacity (in kW) for minigrid hydro technology.
+
         """
 
         logging.info('Calculate minigrid hydro LCOE')
@@ -2715,13 +3825,56 @@ class SettlementProcessor:
                                      mg_pv_hybrid_investment, mg_wind_investment, mg_hydro_investment):
         """Choose minimum LCOE off-grid technology
 
-        First step determines the off-grid technology with minimum LCOE
-        Second step determines the value (number) of the selected minimum off-grid technology
+            First step determines the off-grid technology with minimum LCOE
+            Second step determines the value (number) of the selected minimum off-grid technology
 
-        Arguments
-        ---------
-        year : int
-        mg_hydro_calc : dict
+
+            Parameters
+            ----------
+            year : int
+                The year for which the minimum off-grid technology is being selected.
+            mg_hydro_calc : Instance of a class
+                It contains attribute for a hydro minigrid.
+
+            techs : list of str
+                A list of off-grid technology names that will be analyzed to determine the minimum LCOE.
+
+            tech_codes : list of str
+                A list of corresponding technology codes that match the names in `techs`.
+
+            sa_diesel_investment : pd.Series
+                Investment costs for standalone diesel technology.
+
+            sa_pv_investment : pd.Series
+                Investment costs for standalone photovoltaic (PV) technology.
+
+            mg_diesel_investment : pd.Series
+                Investment costs for minigrid diesel technology.
+
+            mg_pv_hybrid_investment : pd.Series
+                Investment costs for minigrid PV hybrid technology.
+
+            mg_wind_investment : pd.Series
+                Investment costs for minigrid wind technology.
+
+            mg_hydro_investment : pd.Series
+                Investment costs for minigrid hydro technology.
+
+            Returns
+            -------
+            None
+                This method modifies the instance's DataFrame directly by adding columns that reflect the selected
+                minimum off-grid technology and its corresponding investment costs.
+
+            Notes
+            -----
+            - The function assumes that the instance's DataFrame (`self.df`) contains appropriate columns for off-grid
+              technologies indexed by year.
+            - The method performs logging at various steps to track the process and ensure transparency during execution
+            - Investment cost calculations are performed by multiplying the corresponding technology indicator
+            DataFrames with their respective investment costs.
+            - Ensure that `self.df` has the required structure and that the `SET_MIN_OFFGRID` and `SET_MIN_OFFGRID_LCOE`
+              constants are defined in the class.
         """
         off_grid_techs = techs.copy()
         del off_grid_techs[0]
@@ -2768,6 +3921,28 @@ class SettlementProcessor:
                                                            mg_wind * mg_wind_investment + mg_hydro * mg_hydro_investment
 
     def limit_hydro_usage(self, mg_hydro_calc, year):
+        """
+            Limit the usage of hydropower to prevent over-assignment of capacity beyond available resources.
+
+            This method ensures that the assigned capacity for hydropower technologies does not exceed the available
+            hydro potential for each site. It calculates the total hydropower usage based on additional capacity and
+            marks any over-usage in the LCOE DataFrame.
+
+            Parameters
+            ----------
+            mg_hydro_calc : Instance of a class
+                It contains attribute for a hydro minigrid.
+                - capacity_factor : float
+                    The efficiency of the hydropower generation system.
+                - base_to_peak_load_ratio : float
+                    The ratio of base load to peak load for the system.
+                - distribution_losses : float
+                    The fraction of energy lost during distribution.
+
+            year : int
+                The year for which the hydropower usage is being limited. This value is used to access the relevant
+                columns in the DataFrame.
+        """
         # A df with all hydro-power sites, to ensure that they aren't assigned more capacity than is available
         hydro_used = 'HydropowerUsed'  # the amount of the hydro potential that has been assigned
         hydro_lcoe = self.df[SET_LCOE_MG_HYDRO + "{}".format(year)].copy()
@@ -2796,13 +3971,39 @@ class SettlementProcessor:
     def results_columns(self, techs, tech_codes, year, time_step, prio, auto_intensification, mg_interconnection=False):
         """Calculate the capacity and investment requirements for each settlement
 
-        Once the grid extension algorithm has been run, determine the minimum overall option,
-        and calculate the capacity and investment requirements for each settlement
+           Once the grid extension algorithm has been run, determine the minimum overall option,
+           and calculate the capacity and investment requirements for each settlement
 
-        Arguments
-        ---------
-        year : int
+           Parameters
+           ----------
+           techs : list
+               A list of technology names (strings) available for electrification options.
 
+           tech_codes : list
+               A corresponding list of technology codes (strings or integers) that uniquely identify each technology.
+
+           year : int
+               The year for which the calculations are being performed.
+
+           time_step : int
+               The time interval between the current year and the previous year
+
+           prio : int
+               A priority indicator that affects how settlements are connected, influencing whether they are
+               allowed to remain mini-grids or must connect to the grid.
+
+           auto_intensification : float
+               A distance threshold used to determine whether settlements should be automatically connected to the
+               grid based on their proximity to existing grid infrastructure.
+
+           mg_interconnection : bool, optional
+               A flag indicating whether mini-grids are allowed to interconnect. Defaults to False.
+
+           Returns
+           -------
+           None
+               This method modifies the instance's DataFrame directly by updating columns that reflect the
+               minimum technology
         """
 
         all_techs = [x + str(year) for x in techs]
@@ -2842,6 +4043,67 @@ class SettlementProcessor:
                                            mg_pv_hybrid_capacity, mg_wind_investment, mg_wind_capacity,
                                            mg_hydro_investment,
                                            mg_hydro_capacity, grid_investment, grid_capacity, year):
+        """
+            Calculate the investments and capacity for various energy technologies for a given year.
+
+            This method computes the investment costs and new capacity for grid and off-grid technologies
+            based on the selected technology for each settlement. It updates the instance's DataFrame with
+            the calculated values.
+
+            Parameters
+            ----------
+            sa_diesel_investment : pd.Series
+                Investment costs associated with stand-alone diesel systems.
+
+            sa_diesel_capacity : pd.Series
+                Capacity of stand-alone diesel systems.
+
+            sa_pv_investment : pd.Series
+                Investment costs associated with stand-alone PV systems.
+
+            sa_pv_capacity : pd.Series
+                Capacity of stand-alone PV systems.
+
+            mg_diesel_investment : pd.Series
+                Investment costs associated with mini-grid diesel systems.
+
+            mg_diesel_capacity : pd.Series
+                Capacity of mini-grid diesel systems.
+
+            mg_pv_hybrid_investment : pd.Series
+                Investment costs associated with mini-grid PV hybrid systems.
+
+            mg_pv_hybrid_capacity : pd.Series
+                Capacity of mini-grid PV hybrid systems.
+
+            mg_wind_investment : pd.Series
+                Investment costs associated with mini-grid wind systems.
+
+            mg_wind_capacity : pd.Series
+                Capacity of mini-grid wind systems.
+
+            mg_hydro_investment : pd.Series
+                Investment costs associated with mini-grid hydro systems.
+
+            mg_hydro_capacity : pd.Series
+                Capacity of mini-grid hydro systems.
+
+            grid_investment : pd.Series
+                Investment costs associated with grid extensions.
+
+            grid_capacity : pd.Series
+                Capacity of grid extensions.
+
+            year : int
+                The year for which the calculations are being performed. This value is used to access relevant
+                columns in the DataFrame.
+
+            Returns
+            -------
+            None
+                This method modifies the instance's DataFrame directly by updating columns that reflect the
+                investment costs and new capacities for each settlement based on the selected technology.
+        """
 
         grid = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 1, 1, 0))
         sa_diesel = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 2, 1, 0))
@@ -2892,7 +4154,37 @@ class SettlementProcessor:
         self.df[SET_NEW_CAPACITY + "{}".format(year)] = grid * grid_capacity + sa_pv * sa_pv_capacity + \
                                                         mg_pv_hybrid * mg_pv_hybrid_capacity + \
                                                         mg_wind * mg_wind_capacity + mg_hydro * mg_hydro_capacity
+
     def pre_selection(self, eleclimit, year, time_step, prioritization, auto_densification=0):
+        """
+            Pre-select settlements for electrification
+
+            This method calculates which settlements should be prioritized for electrification based on
+            the defined investment per connection, electrification limits, and prioritization choices.
+
+            Parameters
+            ----------
+            eleclimit : float
+                The electrification target rate, where 1 indicates 100% electrification.
+
+            year : int
+                The year for which the pre-selection is being calculated.
+
+            time_step : int
+                The time step used to refer to the previous year's data.
+
+            prioritization : int
+                The strategy for prioritizing settlements for electrification.
+
+            auto_densification : float, optional
+                The distance threshold for densification. Defaults to 0.
+
+            Returns
+            -------
+            None
+                This method modifies the instance's DataFrame directly by adding a column that indicates
+                which settlements are pre-selected for electrification based on the chosen strategy.
+        """
 
         choice = int(prioritization)
         self.df['PreSelection' + "{}".format(year)] = 0
@@ -2960,8 +4252,40 @@ class SettlementProcessor:
 
         del self.df[SET_INVEST_PER_CONNECTION + "{}".format(year)]
 
-
     def apply_limitations(self, eleclimit, year, time_step, prioritization=2, auto_densification=0):
+
+        """
+            Apply limitations to the electrification process based on specified parameters.
+
+            This method determines which settlements can be electrified based on the specified
+            electrification limits, prioritization strategy, and the calculated investment per
+            connection. It updates the instance's DataFrame to reflect the limitations and
+            final electrification decisions for the given year.
+
+            Parameters
+            ----------
+            eleclimit : float
+                The electrification target rate, where 1 indicates 100% electrification.
+
+            year : int
+                The year for which electrification limitations are applied.
+
+            time_step : int
+                The time step used to reference data from the previous year.
+
+            prioritization : int, optional
+                The strategy for prioritizing settlements for electrification. Default is 2.
+
+            auto_densification : float, optional
+                The distance threshold for densification. Default is 0.
+
+            Returns
+            -------
+            None
+                This method modifies the instance's DataFrame directly by adding columns that indicate
+                which settlements are limited for electrification and final decisions for electrification
+                in the specified year.
+        """
 
         logging.info('Determine electrification limits')
         choice = int(prioritization)
@@ -3057,6 +4381,28 @@ class SettlementProcessor:
         print("The electrification rate achieved in {} is {:.1f} %".format(year, elecrate * 100))
 
     def check_grid_limitations(self, grid_connect_limit, grid_cap_limit, year, time_step, final=False):
+        """
+             Checks and adjusts grid connection and capacity limits for a given year.
+
+             Parameters
+             ----------
+             grid_connect_limit : float
+                 The maximum allowable number of new grid connections.
+             grid_cap_limit : float
+                 The maximum allowable new grid generation capacity.
+             year : int
+                 The current year for which the limits are being checked.
+             time_step : int
+                 The time step size (e.g., one year, five years).
+             final : bool, optional
+                 Whether this is the final adjustment (default is False).
+                 If True, only warnings are printed; no changes are made to the DataFrame.
+
+             Notes
+             -----
+             - This function modifies the DataFrame in place to adjust connections and capacity based on limits.
+             - Warnings are printed if the limits are not sufficient when `final` is True.
+        """
 
         # ToDo is there a need to check also total elec_limit with densification???
 
@@ -3084,9 +4430,35 @@ class SettlementProcessor:
                 self.df[SET_POP + "{}".format(year - time_step)] + self.df[SET_NEW_CONNECTIONS + "{}".format(year)]
 
     def calc_summaries(self, df_summary, sumtechs, tech_codes, year, base_year):
+        """
+            Calculate summaries for technology split, capacity added, and total investment cost.
 
-        """The next section calculates the summaries for technology split,
-        capacity added and total investment cost"""
+           This method aggregates data from the instance's DataFrame to create a summary of
+           population, new connections, new capacity, investment cost, and annual emissions
+           for different technologies in the specified year.
+
+           Parameters
+           ----------
+           df_summary : DataFrame
+               The summary DataFrame where results will be stored.
+
+           sumtechs : list
+               List of technology identifiers for summarizing.
+
+           tech_codes : list
+               List of technology codes to filter the data.
+
+           year : int
+               The year for which summaries are calculated.
+
+           base_year : int
+               The base year for comparison to determine new connections.
+
+           Returns
+           -------
+           None
+               This method modifies the df_summary DataFrame directly with calculated summaries.
+        """
 
         logging.info('Calculate summaries')
 
@@ -3108,6 +4480,31 @@ class SettlementProcessor:
                     SET_ELEC_FINAL_CODE + '{}'.format(year)] = 2
 
     def calculate_emission(self, grid_factor, year, time_step, start_year):
+        """Calculate annual emissions based on electrification codes and energy per cell.
+
+          This method computes annual emissions for different electrification technologies
+          based on the energy consumed per connection and emission factors for specific technologies.
+
+          Parameters
+          ----------
+          grid_factor : float
+              The grid emission factor used to calculate emissions from grid energy consumption.
+
+          year : int
+              The year for which the emissions are calculated.
+
+          time_step : int
+              The time step interval for calculating cumulative emissions.
+
+          start_year : int
+              The starting year used to determine if cumulative emissions should be calculated.
+
+          Returns
+          -------
+          None
+              This method modifies the instance's DataFrame to include annual emissions and
+              cumulative emissions if applicable.
+        """
         self.df['AnnualEmissions' + "{}".format(year)] = 0.
 
         self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year)] < 3, 'AnnualEmissions' + "{}".format(year)] = \
