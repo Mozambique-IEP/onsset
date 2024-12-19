@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import numba
 from numba import prange
-import requests
-import os
-import json
-import time
-from io import StringIO
+# import requests
+# import os
+# import json
+# import time
+# from io import StringIO
 
 
 @numba.njit
@@ -43,29 +43,32 @@ def find_least_cost_option_wind(configuration, wind_curve, hour_numbers, load_cu
         npc = 0
     else:
         lcoe, investment, battery_investment, fuel_cost, \
-            om_cost, npc = calculate_hybrid_lcoe_wind(diesel_price=diesel_price,
-                                                     end_year=end_year,
-                                                     start_year=start_year,
-                                                     annual_demand=annual_demand,
-                                                     fuel_usage=annual_fuel_consumption,
-                                                     wind_size=wind,
-                                                     wind_cost=wind_cost,
-                                                     charge_controller=charge_controller,
-                                                     wind_om=wind_om,
-                                                     diesel_capacity=diesel,
-                                                     diesel_cost=diesel_cost,
-                                                     diesel_om=diesel_om,
-                                                     battery_inverter_cost=battery_inverter_cost,
-                                                     battery_inverter_life=battery_inverter_life,
-                                                     load_curve=load_curve,
-                                                     diesel_life=diesel_life,
-                                                     wind_life=wind_life,
-                                                     battery_life=battery_life,
-                                                     battery_size=battery,
-                                                     battery_cost=battery_cost,
-                                                     discount_rate=discount_rate)
+            om_cost, npc =\
+            calculate_hybrid_lcoe_wind(diesel_price=diesel_price,
+                                       end_year=end_year,
+                                       start_year=start_year,
+                                       annual_demand=annual_demand,
+                                       fuel_usage=annual_fuel_consumption,
+                                       wind_size=wind,
+                                       wind_cost=wind_cost,
+                                       charge_controller=charge_controller,
+                                       wind_om=wind_om,
+                                       diesel_capacity=diesel,
+                                       diesel_cost=diesel_cost,
+                                       diesel_om=diesel_om,
+                                       battery_inverter_cost=battery_inverter_cost,
+                                       battery_inverter_life=battery_inverter_life,
+                                       load_curve=load_curve,
+                                       diesel_life=diesel_life,
+                                       wind_life=wind_life,
+                                       battery_life=battery_life,
+                                       battery_size=battery,
+                                       battery_cost=battery_cost,
+                                       discount_rate=discount_rate)
 
-    return lcoe, unmet_demand_share, diesel_generation_share, investment, fuel_cost, om_cost, battery, battery_life, wind, diesel, npc
+    return (lcoe, unmet_demand_share, diesel_generation_share,
+            investment, fuel_cost, om_cost, battery, battery_life, wind, diesel, npc)
+
 
 @numba.njit
 def wind_generation(wind_curve, wind, load, inv_eff):
@@ -81,9 +84,10 @@ def wind_generation(wind_curve, wind, load, inv_eff):
     net_load = load - wind_gen
     return net_load, wind_gen
 
+
 @numba.njit
 def year_simulation_wind(battery_size, diesel_capacity, net_load, hour_numbers, inv_eff, n_dis, n_chg,
-                    annual_demand, full_life_cycles, dod_max):
+                         annual_demand, full_life_cycles, dod_max):
     soc = 0.5  # Initial SOC of battery
 
     # Variables for tracking annual performance information
@@ -103,12 +107,11 @@ def year_simulation_wind(battery_size, diesel_capacity, net_load, hour_numbers, 
     for hour in hour_numbers:
         load = net_load[int(hour)]
 
-        diesel_gen, annual_fuel_consumption, annual_diesel_gen, annual_battery_use, soc, annual_unmet_demand, \
-            annual_excess_gen = hour_simulation_wind(hour, soc, load, diesel_capacity, annual_fuel_consumption,
-                                                annual_diesel_gen,
-                                                inv_eff, n_dis, n_chg, battery_size, annual_battery_use,
-                                                annual_unmet_demand,
-                                                annual_excess_gen)
+        (diesel_gen, annual_fuel_consumption, annual_diesel_gen, annual_battery_use, soc, annual_unmet_demand,
+         annual_excess_gen) =\
+            hour_simulation_wind(hour, soc, load, diesel_capacity, annual_fuel_consumption,
+                                 annual_diesel_gen, inv_eff, n_dis, n_chg, battery_size,
+                                 annual_battery_use, annual_unmet_demand, annual_excess_gen)
 
         # Update plotting arrays
         diesel_gen_curve.append(diesel_gen)
@@ -116,7 +119,7 @@ def year_simulation_wind(battery_size, diesel_capacity, net_load, hour_numbers, 
 
     # When a full year has been simulated, calculate battery life and performance metrics
     if (battery_size > 0) & (annual_battery_use > 0):
-        battery_life = min(round(full_life_cycles / (annual_battery_use)), 20)  # ToDo should dod_max be included here?
+        battery_life = min(round(full_life_cycles / annual_battery_use), 20)  # ToDo should dod_max be included here?
     else:
         battery_life = 20
 
@@ -129,14 +132,16 @@ def year_simulation_wind(battery_size, diesel_capacity, net_load, hour_numbers, 
 
 
 @numba.njit
-def hour_simulation_wind(hour, soc, net_load, diesel_capacity, annual_fuel_consumption, annual_diesel_gen, inv_eff, n_dis,
-                    n_chg, battery_size, annual_battery_use, annual_unmet_demand, annual_excess_gen):
+def hour_simulation_wind(hour, soc, net_load, diesel_capacity, annual_fuel_consumption,
+                         annual_diesel_gen, inv_eff, n_dis, n_chg, battery_size, annual_battery_use,
+                         annual_unmet_demand, annual_excess_gen):
     # First the battery self-discharge is calculated (default rate set to 0.02% of the state-of-charge - SOC - per hour)
     battery_use = 0.0002 * soc
     soc - 0.0002 * soc
 
     battery_dispatchable = soc * battery_size * n_dis * inv_eff  # Max load that can be met by the battery until empty
-    battery_chargeable = (1 - soc) * battery_size / n_chg / inv_eff  # Max energy that can be used to charge the battery until full
+    battery_chargeable = (1 - soc) * battery_size / n_chg / inv_eff  # Max energy that can be used
+    # to charge the battery until full
 
     # Below is the dispatch strategy for the diesel generator and battery
 
@@ -235,10 +240,10 @@ def hour_simulation_wind(hour, soc, net_load, diesel_capacity, annual_fuel_consu
 
 @numba.njit
 def calculate_hybrid_lcoe_wind(diesel_price, end_year, start_year, annual_demand,
-                          fuel_usage, wind_size, wind_cost, wind_life, wind_om, charge_controller,
-                          diesel_capacity, diesel_cost, diesel_om, diesel_life,
-                          battery_size, battery_cost, battery_life, battery_inverter_cost, battery_inverter_life,
-                          load_curve, discount_rate):
+                               fuel_usage, wind_size, wind_cost, wind_life, wind_om, charge_controller,
+                               diesel_capacity, diesel_cost, diesel_om, diesel_life,
+                               battery_size, battery_cost, battery_life, battery_inverter_cost, battery_inverter_life,
+                               load_curve, discount_rate):
 
     # Necessary information for calculation of LCOE is defined
     project_life = end_year - start_year  # Calculate project lifetime
@@ -271,7 +276,8 @@ def calculate_hybrid_lcoe_wind(diesel_price, end_year, start_year, annual_demand
 
         # Here we check if there is need for investment/reinvestment
         if year % battery_inverter_life == 0:
-            inverter_investment = max(load_curve) * battery_inverter_cost  # Battery inverter, sized based on the peak demand in the year
+            inverter_investment = max(load_curve) * battery_inverter_cost  # Battery inverter,
+            # sized based on the peak demand in the year
         if year % diesel_life == 0:
             diesel_investment = diesel_capacity * diesel_cost
         if year % wind_life == 0:
@@ -410,4 +416,3 @@ def read_wind_environmental_data(wind_path, skiprows=3, wind_col=3):
         return wind_curve
     except:
         print('Could not read data, try changing which columns and rows ro read')
-
