@@ -67,16 +67,18 @@ def find_least_cost_option(configuration, temp, ghi, hour_numbers, load_curve, i
     return lcoe, unmet_demand_share, diesel_generation_share, investment, fuel_cost, om_cost, battery, \
         battery_life, pv, diesel, npc
 
+
 @numba.njit
 def pv_generation(temp, ghi, pv_capacity, load, inv_eff):
     # Calculation of PV gen and net load
-    temp = temp[:,0]
-    ghi = ghi[:,0]
+    temp = temp[:, 0]
+    ghi = ghi[:, 0]
     k_t = 0.005  # temperature factor of PV panels
     t_cell = temp + 0.0256 * ghi  # PV cell temperature
     pv_gen = pv_capacity * 0.9 * ghi / 1000 * (1 - k_t * (t_cell - 25))  # PV generation in the hour
     net_load = load - pv_gen * inv_eff  # remaining load not met by PV panels
     return net_load, pv_gen
+
 
 @numba.njit
 def year_simulation(battery_size, diesel_capacity, net_load, hour_numbers, inv_eff, n_dis, n_chg,
@@ -111,7 +113,7 @@ def year_simulation(battery_size, diesel_capacity, net_load, hour_numbers, inv_e
 
     # When a full year has been simulated, calculate battery life and performance metrics
     if (battery_size > 0) & (annual_battery_use > 0):
-        battery_life = min(round(full_life_cycles / (annual_battery_use)), 20)  # ToDo should dod_max be included here?
+        battery_life = min(round(full_life_cycles / annual_battery_use), 20)  # ToDo should dod_max be included here?
     else:
         battery_life = 20
 
@@ -131,7 +133,8 @@ def hour_simulation(hour, soc, net_load, diesel_capacity, annual_fuel_consumptio
     soc - 0.0002 * soc
 
     battery_dispatchable = soc * battery_size * n_dis * inv_eff  # Max load that can be met by the battery until empty
-    battery_chargeable = (1 - soc) * battery_size / n_chg / inv_eff  # Max energy that can be used to charge the battery until full
+    battery_chargeable = (1 - soc) * battery_size / n_chg / inv_eff  # Max energy that can be used to charge
+    # the battery until full
 
     # Below is the dispatch strategy for the diesel generator and battery
 
@@ -266,11 +269,13 @@ def calculate_hybrid_lcoe(diesel_price, end_year, start_year, annual_demand,
 
         # Here we check if there is need for investment/reinvestment
         if year % battery_inverter_life == 0:
-            inverter_investment = max(load_curve) * battery_inverter_cost  # Battery inverter, sized based on the peak demand in the year
+            inverter_investment = max(load_curve) * battery_inverter_cost  # Battery inverter,
+            # sized based on the peak demand in the year
         if year % diesel_life == 0:
             diesel_investment = diesel_capacity * diesel_cost
         if year % pv_life == 0:
-            pv_investment = pv_panel_size * (pv_cost + charge_controller + pv_inverter_cost)  # PV inverter and charge controller are sized based on the PV panel rated capacity
+            pv_investment = pv_panel_size * (pv_cost + charge_controller + pv_inverter_cost)  # PV inverter and
+            # charge controller are sized based on the PV panel rated capacity
         if year % battery_life == 0:
             battery_investment = battery_size * battery_cost
 
@@ -402,7 +407,7 @@ def read_environmental_data(path, skiprows=341882, ghi_col=3, temp_col=2):
     The skiprows and skipcolumns define which rows and columns the data should be read from.
     """
     try:
-        #data = pd.read_csv(path, skiprows=skiprows)
+        # data = pd.read_csv(path, skiprows=skiprows)
         ghi_curve = pd.read_csv(path, usecols=[ghi_col], skiprows=skiprows).values
         temp = pd.read_csv(path, usecols=[temp_col], skiprows=skiprows).values
 

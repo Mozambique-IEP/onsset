@@ -14,7 +14,7 @@ root.withdraw()
 root.attributes("-topmost", True)
 
 choice = int(input('Enter 1 to prepare/calibrate the GIS input file, 2 to run scenario(s): '))
-#choice = 2
+# choice = 2
 
 if choice == 1:
     messagebox.showinfo('OnSSET', 'Open the specs file')
@@ -54,5 +54,3 @@ elif choice == 2:
     mv_path = filedialog.askopenfilename()
 
     scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv_path, wind_path, mv_path)
-
-

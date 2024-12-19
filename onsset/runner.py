@@ -2,7 +2,7 @@
 
 import logging
 import os
-import time
+# import time
 import geopandas as gpd
 
 import geojson
@@ -51,8 +51,8 @@ def calibration(specs_path, csv_path, specs_path_calib, calibrated_csv_path):
 
     onsseter = SettlementProcessor(settlements_in_csv)
 
-    num_people_per_hh_rural = float(specs_data.iloc[0][SPE_NUM_PEOPLE_PER_HH_RURAL])
-    num_people_per_hh_urban = float(specs_data.iloc[0][SPE_NUM_PEOPLE_PER_HH_URBAN])
+    # num_people_per_hh_rural = float(specs_data.iloc[0][SPE_NUM_PEOPLE_PER_HH_RURAL])
+    # num_people_per_hh_urban = float(specs_data.iloc[0][SPE_NUM_PEOPLE_PER_HH_URBAN])
 
     # RUN_PARAM: these are the annual household electricity targets
     tier_1 = 38.7  # 38.7 refers to kWh/household/year. It is the mean value between Tier 1 and Tier 2
@@ -94,22 +94,26 @@ def calibration(specs_path, csv_path, specs_path_calib, calibrated_csv_path):
     specs_data['mg_pop_electrified'] = mg_pop_calib
 
     if SPE_COST_NON_SUPLIED_ENERGY in specs_data.columns:
-        specs_data[SPE_COST_NON_SUPLIED_ENERGY]= specs_data.loc[0, SPE_COST_NON_SUPLIED_ENERGY] if not pd.isna(specs_data.loc[0, SPE_COST_NON_SUPLIED_ENERGY]) else 0
+        specs_data[SPE_COST_NON_SUPLIED_ENERGY] = (
+            specs_data.loc[0, SPE_COST_NON_SUPLIED_ENERGY]
+            if not pd.isna(specs_data.loc[0, SPE_COST_NON_SUPLIED_ENERGY])
+            else 0
+        )
     else:
         specs_data[SPE_COST_NON_SUPLIED_ENERGY] = 0
 
-    book = load_workbook(specs_path)
+    # book = load_workbook(specs_path)
     with pd.ExcelWriter(specs_path_calib, engine='openpyxl') as writer:
-        #writer = pd.ExcelWriter(specs_path_calib, engine='openpyxl')
-        #writer.workbook = book
+        # writer = pd.ExcelWriter(specs_path_calib, engine='openpyxl')
+        # writer.workbook = book
         for sheet_name, df in sheets_dict.items():
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
             # RUN_PARAM: Here the calibrated "specs" data are copied to a new tab called "SpecsDataCalib".
             # This is what will later on be used to feed the model
         specs_data.to_excel(writer, sheet_name='SpecsDataCalib', index=False)
-    #writer.save()
-    #writer.close()
+    # writer.save()
+    # writer.close()
 
     logging.info('Calibration finished. Results are transferred to the csv file')
     onsseter.df.to_csv(settlements_out_csv, index=False)
@@ -121,9 +125,19 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
     Arguments
     ---------
     specs_path : str
+        Path to scenarios parameters
     calibrated_csv_path : str
+        Path to calibrated CSV file
     results_folder : str
+        Folder where results will be stored
     summary_folder : str
+        Folder where summaries will be stored
+    pv_path: str
+        path where solar data is stored
+    wind_path: str
+        path where wind data is stored
+    mv_path: str
+        path where MV lines GIS file is store
 
     """
 
@@ -160,17 +174,19 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
         tier_index = scenario_info.iloc[scenario]['Target_electricity_consumption_level']
         grid_index = scenario_info.iloc[scenario]['Grid_electricity_generation_cost']
         pv_index = scenario_info.iloc[scenario]['PV_cost_adjust']
-        productive_index = scenario_info.iloc[scenario]['Productive_uses_demand']
+        # productive_index = scenario_info.iloc[scenario]['Productive_uses_demand']
         prio_index = scenario_info.iloc[scenario]['Prioritization_algorithm']
 
         rural_tier = scenario_parameters.iloc[tier_index]['RuralTargetTier']
         urban_tier = scenario_parameters.iloc[tier_index]['UrbanTargetTier']
         grid_price = scenario_parameters.iloc[grid_index]['GridGenerationCost']
         pv_capital_cost_adjust = scenario_parameters.iloc[pv_index]['PV_Cost_adjust']
-        productive_demand = scenario_parameters.iloc[productive_index]['ProductiveDemand']
+        # productive_demand = scenario_parameters.iloc[productive_index]['ProductiveDemand']
         prioritization = scenario_parameters.iloc[prio_index]['PrioritizationAlgorithm']
         auto_intensification = scenario_parameters.iloc[prio_index]['AutoIntensificationKM']
-        max_auto_intensification_cost = scenario_parameters.iloc[prio_index]['MaxIntensificationCost']  # Max household connection cost for forced grid intensification
+        max_auto_intensification_cost =\
+            scenario_parameters.iloc[prio_index]['MaxIntensificationCost']  # Max household connection cost
+        # for forced grid intensification
 
         settlements_out_csv = os.path.join(results_folder,
                                            '{}-1-{}_{}_{}_{}.csv'.format(country_id, tier_index, grid_index, pv_index,
@@ -197,21 +213,23 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
 
         onsseter.project_pop_and_urban(pop_future, urban_future, base_year, yearsofanalysis)
 
-        discount_rate = 0.08  # RUN_PARAM
+        # discount_rate = 0.08  # RUN_PARAM
 
         carbon_cost = scenario_parameters['CarbonTax'][grid_index]  # ToDo does not need to be linked to grid index?
         grid_emission_factor = scenario_parameters['GridEmissionFactor'][grid_index]
         grid_capacity_investment = scenario_parameters['GridCapacityInvestmentCost'][grid_index]
-        grid_re_share = scenario_parameters['GridRenShare'][grid_index]
+        # grid_re_share = scenario_parameters['GridRenShare'][grid_index]
 
         # Carbon cost represents the cost in USD/tonCO2eq, which is converted and added to the diesel price
-        diesel_price = float(scenario_parameters.iloc[0]['DieselPrice'] + (carbon_cost / 1000000) * 256.9131097 * 9.9445485)
+        diesel_price =\
+            float(scenario_parameters.iloc[0]['DieselPrice']
+                  + (carbon_cost / 1000000) * 256.9131097 * 9.9445485)
 
         grid_discount_rate = 0.08
         mg_discount_rate = 0.08
         sa_discount_rate = 0.08
 
-        small_rural_threshold = 100
+        # small_rural_threshold = 100
 
         new_lines_geojson = {}
 
@@ -248,7 +266,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                        mini_grid=True,
                                        discount_rate=mg_discount_rate)
 
-            mg_wind_calc = Technology(om_of_td_lines=0.02,
+            """mg_wind_calc = Technology(om_of_td_lines=0.02,
                                       distribution_losses=0.05,
                                       connection_cost_per_hh=100,
                                       base_to_peak_load_ratio=0.85,
@@ -256,7 +274,7 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                                       om_costs=0.02,
                                       tech_life=20,
                                       mini_grid=True,
-                                      discount_rate=mg_discount_rate)
+                                      discount_rate=mg_discount_rate)"""
 
             sa_pv_calc = Technology(base_to_peak_load_ratio=0.9,
                                     tech_life=15,
@@ -306,7 +324,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                 'n_dis': 0.92,  # discharge efficiency of battery
                 'battery_cost': 550,  # battery capital cost, USD/kWh of storage capacity
                 'pv_cost': 1400,  # PV panel capital cost, USD/kW peak power
-                'charge_controller': 0,  # PV charge controller cost, USD/kW peak power, set to 0 if already included in pv_cost
+                'charge_controller': 0,  # PV charge controller cost,
+                # USD/kW peak power, set to 0 if already included in pv_cost
                 'pv_inverter': 0,  # PV inverter cost, USD/kW peak power, set to 0 if already included in pv_cost
                 'pv_life': 25,  # PV panel expected lifetime, years
                 'diesel_life': 10,  # diesel generator expected lifetime, years
@@ -322,7 +341,8 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             }
 
             mg_wind_hybrid_params = {
-                'min_mg_size_ppl': min_mg_size, # minimum number of people in settlement for mini-grids to be considered as an option
+                'min_mg_size_ppl': min_mg_size,  # minimum number of people
+                # in settlement for mini-grids to be considered as an option
                 'diesel_cost': 500,  # diesel generator capital cost, USD/kW rated power
                 'discount_rate': mg_discount_rate,
                 'n_chg': 0.92,  # charge efficiency of battery
@@ -344,13 +364,14 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                 'full_life_cycles': 2000  # Equivalent full life-cycles of battery until replacement
             }
 
-            mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,
+            """ mg_diesel_calc = Technology(base_to_peak_load_ratio=0.85,
                                         capacity_factor=0.7,
                                         tech_life=15,
                                         om_costs=0.1,
                                         capital_cost=450,
                                         efficiency=0.33,
                                         discount_rate=mg_discount_rate)
+            """
 
             # Used to model LCOE for non-served-energy
             sa_diesel_calc = Technology(base_to_peak_load_ratio=0.85,  # Deducted from curves
@@ -376,8 +397,10 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             num_people_per_hh_rural = float(specs_data.loc[year][SPE_NUM_PEOPLE_PER_HH_RURAL])
             num_people_per_hh_urban = float(specs_data.loc[year][SPE_NUM_PEOPLE_PER_HH_URBAN])
             max_grid_extension_dist = float(specs_data.loc[year][SPE_MAX_GRID_EXTENSION_DIST])
-            annual_grid_cap_gen_limit = specs_data.loc[year, 'NewGridGenerationCapacityAnnualLimitMW'] * 1000 * time_step
-            annual_new_grid_connections_limit = specs_data.loc[year]['GridConnectionsLimitThousands'] * 1000 * time_step
+            annual_grid_cap_gen_limit =\
+                specs_data.loc[year, 'NewGridGenerationCapacityAnnualLimitMW'] * 1000 * time_step
+            annual_new_grid_connections_limit =\
+                specs_data.loc[year]['GridConnectionsLimitThousands'] * 1000 * time_step
 
             onsseter.calculate_demand(year, num_people_per_hh_rural, num_people_per_hh_urban, time_step,
                                       urban_tier, rural_tier)
@@ -408,15 +431,15 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
                     onsseter.pv_hybrids_lcoe(year, time_step, end_year,
                                              mg_pv_hybrid_params, pv_folder_path=pv_path)
 
-
-
-            sa_diesel_investment, sa_diesel_capacity, sa_pv_investment, sa_pv_capacity, mg_diesel_investment, \
-            mg_diesel_capacity, mg_pv_hybrid_investment, mg_pv_hybrid_capacity, mg_wind_investment, mg_wind_capacity, \
-            mg_hydro_investment, mg_hydro_capacity = onsseter.calculate_off_grid_lcoes(mg_hydro_calc, mg_wind_hybrid_calc,
-                                                                                       sa_pv_calc,
-                                                                                       mg_pv_hybrid_calc,
-                                                                                       year, end_year, time_step,
-                                                                                       techs, tech_codes, min_mg_size, 0)
+            (sa_diesel_investment, sa_diesel_capacity, sa_pv_investment, sa_pv_capacity, mg_diesel_investment,
+             mg_diesel_capacity, mg_pv_hybrid_investment, mg_pv_hybrid_capacity, mg_wind_investment, mg_wind_capacity,
+             mg_hydro_investment, mg_hydro_capacity) =\
+                onsseter.calculate_off_grid_lcoes(mg_hydro_calc,
+                                                  mg_wind_hybrid_calc,
+                                                  sa_pv_calc,
+                                                  mg_pv_hybrid_calc,
+                                                  year, end_year, time_step,
+                                                  techs, tech_codes, min_mg_size, 0)
 
             grid_investment, grid_capacity, grid_cap_gen_limit, grid_connect_limit = \
                 onsseter.pre_electrification(grid_price, year, time_step, end_year, grid_calc, sa_diesel_calc,
@@ -451,18 +474,25 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.results_columns(techs, tech_codes, year, time_step, prioritization, auto_intensification,
                                      mg_interconnection)
 
-            onsseter.calculate_investments_and_capacity(sa_diesel_investment, sa_diesel_capacity, sa_pv_investment,
-                                                sa_pv_capacity, mg_diesel_investment, mg_diesel_capacity,
-                                                mg_pv_hybrid_investment, mg_pv_hybrid_capacity, mg_wind_investment,
-                                                mg_wind_capacity, mg_hydro_investment, mg_hydro_capacity,
-                                                grid_investment, grid_capacity, year)
+            onsseter.calculate_investments_and_capacity(
+                sa_diesel_investment, sa_diesel_capacity, sa_pv_investment,
+                sa_pv_capacity, mg_diesel_investment, mg_diesel_capacity,
+                mg_pv_hybrid_investment, mg_pv_hybrid_capacity, mg_wind_investment,
+                mg_wind_capacity, mg_hydro_investment, mg_hydro_capacity,
+                grid_investment, grid_capacity, year)
 
             if year == yearsofanalysis[-1]:
                 final_step = True
             else:
                 final_step = False
 
-            onsseter.check_grid_limitations(annual_new_grid_connections_limit, annual_grid_cap_gen_limit, year, time_step, final_step)
+            onsseter.check_grid_limitations(
+                annual_new_grid_connections_limit,
+                annual_grid_cap_gen_limit,
+                year,
+                time_step,
+                final_step
+            )
 
             onsseter.apply_limitations(eleclimit, year, time_step, 2, auto_intensification)
 
@@ -472,7 +502,9 @@ def scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv
             onsseter.calc_summaries(df_summary, sumtechs, tech_codes, year, base_year)
 
             # Save to a GeoJSON file
-            with open(os.path.join(results_folder, 'new_mv_lines_{}_{}.geojson'.format(scenario, year)), 'w') as f: # ToDo
+            with open(
+                    os.path.join(results_folder,
+                                 'new_mv_lines_{}_{}.geojson'.format(scenario, year)), 'w') as f:  # ToDo
                 geojson.dump(new_lines_geojson[year], f)
             gdf = gpd.read_file(os.path.join(results_folder, 'new_mv_lines_{}_{}.geojson'.format(scenario, year)))
             gdf = gdf.set_crs(3395, allow_override=True)
