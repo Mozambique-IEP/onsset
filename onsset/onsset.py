@@ -1950,7 +1950,7 @@ class SettlementProcessor:
         data = gpd.read_file(mv_lines_path)
         data = data.to_crs(3395)
 
-        def interpolate_points(line, distance):
+        def interpolate_points(line_in, distance_in):
             """Interpolate points along a LineString at a specified distance interval.
 
              This function generates a list of points along the input LineString, spaced
@@ -1959,9 +1959,9 @@ class SettlementProcessor:
 
              Parameters
              ----------
-             line_input : shapely.geometry.LineString
+             line_in : shapely.geometry.LineString
                  The input LineString along which points will be interpolated.
-             distance_input : float
+             distance_in : float
                  The distance interval between consecutive points.
 
              Returns
@@ -1969,8 +1969,8 @@ class SettlementProcessor:
              list of shapely.geometry.Point
                  A list of points interpolated along the LineString.
              """
-            num_vertices = int(line.length / distance) + 1
-            points = [line.interpolate(i * distance) for i in range(num_vertices)]
+            num_vertices = int(line_in.length / distance_in) + 1
+            points = [line_in.interpolate(i * distance_in) for i in range(num_vertices)]
             return points
 
         # Function to convert a coordinate to Point geometry
@@ -3172,19 +3172,22 @@ class SettlementProcessor:
         )
 
         gen_lcoe, inv, cap, fuel_cost = zip(
-            *self.df.apply(lambda row: self.optimize_mini_grid(ghi_curve * ((ghi_curve.sum() / 1000) / row[SET_GHI]),
-                                                               temp,
-                                                               row[SET_ENERGY_PER_CELL + '{}'.format(year)],
-                                                               row[SET_TIER],
-                                                               row[SET_MG_DIESEL_FUEL + '{}'.format(year)],
-                                                               year - time_step,
-                                                               end_year,
-                                                               year,
-                                                               time_step,
-                                                               mg_pv_hybrid_specs)
-            if row['PotentialMG'] == 1
-            else [99, 0, 0, 0],
-                           axis=1))
+            *self.df[self.df['PotentialMG'] == 1].apply(
+                lambda row: self.optimize_mini_grid(
+                    ghi_curve * ((ghi_curve.sum() / 1000) / row[SET_GHI]),
+                    temp,
+                    row[SET_ENERGY_PER_CELL + '{}'.format(year)],
+                    row[SET_TIER],
+                    row[SET_MG_DIESEL_FUEL + '{}'.format(year)],
+                    year - time_step,
+                    end_year,
+                    year,
+                    time_step,
+                    mg_pv_hybrid_specs
+                ),
+                axis=1
+            ).tolist()
+        )
 
         del self.df['PotentialMG']
 
@@ -3521,7 +3524,7 @@ class SettlementProcessor:
             (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 5), 1, 0)
 
         gen_lcoe, inv, cap, fuel_cost = zip(
-            *self.df.apply(
+            *self.df[self.df['PotentialMG'] == 1].apply(
                 lambda row: self.optimize_mini_grid_wind(
                     wind_curve * row[SET_WINDVEL] / np.average(wind_curve),
                     row[SET_ENERGY_PER_CELL + '{}'.format(year)],
@@ -3531,11 +3534,11 @@ class SettlementProcessor:
                     end_year,
                     year,
                     time_step,
-                    mg_wind_hybrid_specs)
-
-            if row['PotentialMG'] == 1
-            else [99, 0, 0, 0],
-                           axis=1))
+                    mg_wind_hybrid_specs
+                ),
+                axis=1
+            ).tolist()
+        )
 
         del self.df['PotentialMG']
 
@@ -4626,12 +4629,14 @@ class SettlementProcessor:
         self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year)] < 3, 'AnnualEmissions' + "{}".format(year)] = \
             self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * grid_factor / 1000
         # self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year)] == 5, 'AnnualEmissions' + "{}".format(year)] = \
-        # self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * self.df['PVHybridEmissionFactor' + "{}".format(year)] / 1000
+        # self.df[SET_ENERGY_PER_CELL +
+        # "{}".format(year)] * self.df['PVHybridEmissionFactor' + "{}".format(year)] / 1000
 
         self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year)] == 5, 'AnnualEmissions' + "{}".format(year)] = \
             self.df['PVHybridEmissionFactor' + "{}".format(year)] / 1000
         # self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year)] == 9, 'AnnualEmissions' + "{}".format(year)] = \
-        # self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * self.df['WindHybridEmissionFactor' + "{}".format(year)] / 1000
+        # self.df[SET_ENERGY_PER_CELL]
+        # + "{}".format(year)] * self.df['WindHybridEmissionFactor' + "{}".format(year)] / 1000
 
         if year - time_step != start_year:
             self.df['AnnualEmissionsTotal'] = self.df['AnnualEmissions' + "{}".format(year)] + self.df[
