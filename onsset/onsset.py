@@ -106,6 +106,10 @@ SET_MIN_TD_DIST = 'minTDdist'
 SET_SA_DIESEL_FUEL = 'SADieselFuelCost'
 SET_MG_DIESEL_FUEL = 'MGDieselFuelCost'
 SET_MG_DIST = 'MGDist'
+SET_GRID_RELIABILITY = 'GridReliability' #To Calculate grid reliability
+SET_UNMET_DEMAND = 'UnmetDemand' #To Calculate grid reliability
+SET_BACKUP_CAP = "BackupCap"
+SET_BACKUP_LCOE ="BackUpLCOE"
 
 # General
 LHV_DIESEL = 9.9445485  # (kWh/l) lower heating value
@@ -141,7 +145,8 @@ class Technology:
                  hybrid_investment=0,
                  hybrid_capacity=0,
                  hybrid_fuel=0,
-                 discount_rate=0.08
+                 discount_rate=0.08,
+                 cnse=0
                  ):  # percentage
 
         self.distribution_losses = distribution_losses
@@ -167,6 +172,7 @@ class Technology:
         self.hybrid_capacity = hybrid_capacity
         self.hybrid_fuel = hybrid_fuel
         self.discount_rate = discount_rate
+        self.cnse=cnse
 
     @classmethod
     def set_default_values(cls, base_year, start_year, end_year, hv_line_type=69, hv_line_cost=53000,
@@ -174,7 +180,7 @@ class Technology:
                            lv_line_type=0.240, lv_line_cost=4250, lv_line_max_length=0.5, service_transf_type=50,
                            service_transf_cost=4250, max_nodes_per_serv_trans=300, mv_lv_sub_station_type=400,
                            mv_lv_sub_station_cost=10000, hv_mv_sub_station_cost=25000, hv_mv_substation_type=10000,
-                           power_factor=0.9, load_moment=9643):
+                           power_factor=0.9, load_moment=9643, cnse=0):
         """Initialises the class with parameter values common to all Technologies
         """
         cls.base_year = base_year
@@ -201,11 +207,13 @@ class Technology:
         cls.hv_mv_sub_station_cost = hv_mv_sub_station_cost  # $/unit
         cls.power_factor = power_factor
         cls.load_moment = load_moment  # for 50mm aluminum conductor under 5% voltage drop (kW m)
+        cls.cnse = cnse  # cost of non served energy to include penalty in grid lcoe for low reliability grid
 
     def get_lcoe(self, energy_per_cell, people, num_people_per_hh, start_year, end_year, new_connections,
-                 total_energy_per_cell, prev_code, grid_cell_area, additional_mv_line_length=0.0,
-                 capacity_factor=0.9, grid_penalty_ratio=1, fuel_cost=0, elec_loop=0, productive_nodes=0,
-                 additional_transformer=0, penalty=1, get_max_dist=False):
+                 total_energy_per_cell, prev_code, grid_cell_area, sa_diesel_calc={}, unmet_demand=0, additional_mv_line_length=0.0,
+                 capacity_factor=0.9, grid_penalty_ratio=1, fuel_cost=0, elec_loop=0,
+                 productive_nodes=0,  additional_transformer=0, penalty=1, get_max_dist=False, fuel_cost_settlement=0,
+                 grid_reliability_option='None'):
         """Calculates the LCOE depending on the parameters.
 
         Parameters
@@ -344,10 +352,26 @@ class Technology:
         for p in range(project_life):
             fuel[:, p] = el_gen[:, p] * fuel_cost
 
+        if grid_reliability_option == 'DieselBackup':
+            total_costs_reliability, discounted_costs_backup, backup_capacity = \
+                sa_diesel_calc.get_lcoe_backup(project_life, step, new_connections, num_people_per_hh, energy_per_cell,
+                                               unmet_demand, fuel_cost_settlement)
+        elif grid_reliability_option == 'CNSE':
+            discounted_costs_backup = np.outer(unmet_demand, 0)
+            total_costs_reliability = np.outer(unmet_demand, self.cnse)
+            backup_capacity = 0
+        elif grid_reliability_option == 'None':
+            discounted_costs_backup = np.outer(unmet_demand, 0)
+            total_costs_reliability = np.outer(unmet_demand, 0)
+            backup_capacity = 0
+        else:
+            print('No valid grid reliability option chosen')
+
         discounted_investments = investments / discount_factor
-        dicounted_grid_capacity_investments = grid_capacity_investments / discount_factor
-        investment_cost = np.sum(discounted_investments, axis=1) + np.sum(dicounted_grid_capacity_investments, axis=1)
-        discounted_costs = (investments + operation_and_maintenance + fuel - salvage) / discount_factor
+        discounted_grid_capacity_investments = grid_capacity_investments / discount_factor
+
+        investment_cost = (np.sum(discounted_investments, axis=1) + np.sum(discounted_grid_capacity_investments, axis=1) + np.sum(discounted_costs_backup, axis=1))
+        discounted_costs = (investments + operation_and_maintenance + fuel - salvage + total_costs_reliability) / discount_factor
         discounted_generation = el_gen / discount_factor
         lcoe = np.sum(discounted_costs, axis=1) / np.sum(discounted_generation, axis=1)
         # lcoe = pd.DataFrame(lcoe[:, np.newaxis])
@@ -356,7 +380,7 @@ class Technology:
 
         lcoe = pd.DataFrame(lcoe)
         investment_cost = pd.DataFrame(investment_cost)
-        installed_capacity = pd.DataFrame(installed_capacity)
+        installed_capacity = pd.DataFrame(installed_capacity + backup_capacity)
 
         if get_max_dist:
             return lcoe, investment_cost, installed_capacity, peak_load
@@ -366,6 +390,73 @@ class Technology:
                 hybrid_capacity
         else:
             return lcoe, investment_cost, installed_capacity
+
+    def get_lcoe_backup(self, project_life, step, people, num_people_per_hh, demand, unmet_demand, fuel_cost_settlement):
+
+        if type(unmet_demand) == int or type(unmet_demand) == float or type(unmet_demand) == np.float64:
+            if unmet_demand == 0:
+                # If there is no demand, set the demand low (prevent div/0 error) and continue.
+                unmet_demand = 0.000000000001
+        else:
+            unmet_demand = np.maximum(unmet_demand, 0.000000000001)
+
+        reinvest_year = 0
+
+        cap_cost = unmet_demand * 0
+        cost_dict_list = self.capital_cost.keys()
+        cost_dict_list = sorted(cost_dict_list)
+
+        # Sizing diesel generator
+        installed_capacity_diesel_genset = demand / self.capacity_factor / HOURS_PER_YEAR / self.base_to_peak_load_ratio
+
+        for key in cost_dict_list:
+            if self.standalone:
+                cap_cost.loc[((installed_capacity_diesel_genset / (people / num_people_per_hh)) < key) & (cap_cost == 0)] = \
+                    self.capital_cost[key]
+            else:
+                cap_cost.loc[(installed_capacity_diesel_genset < key) & (cap_cost == 0)] = self.capital_cost[key]
+
+        # If the technology life is less than the project life, we will have to invest twice to buy it again
+        if self.tech_life + step < project_life:
+            reinvest_year = self.tech_life + step
+
+        year = np.arange(project_life)
+        discount_factor = (1 + self.discount_rate) ** year
+
+        capital_cost_diesel_genset = np.zeros(project_life)
+        capital_cost_diesel_genset[0] = 1
+        total_investment_cost = installed_capacity_diesel_genset * cap_cost
+
+        # Calculate the year of re-investment if tech_life is smaller than project life
+        if reinvest_year:
+            capital_cost_diesel_genset[reinvest_year] = 1
+        capital_cost_diesel_genset = np.outer(total_investment_cost, capital_cost_diesel_genset)
+
+        # Diesel usage and O&M
+        diesel_gen_set_generation = unmet_demand / self.efficiency  # kWh
+        fuel_gen_set = diesel_gen_set_generation * fuel_cost_settlement  # kWh * USD/kWh
+        life_time_diesel = np.ones(project_life)
+
+        total_om_cost_diesel = np.outer(
+            installed_capacity_diesel_genset * self.om_costs * cap_cost, life_time_diesel)
+
+        fuel_gen_set = np.outer(fuel_gen_set, life_time_diesel)
+
+        if reinvest_year > 0:
+            used_life = (project_life - step) - self.tech_life
+        else:
+            used_life = project_life - step - 1
+
+        salvage_diesel_genset = np.zeros(project_life)
+        salvage_diesel_genset[-1] = 1
+        salvage_diesel_genset = np.outer(installed_capacity_diesel_genset * cap_cost * (
+                    1 - used_life / self.tech_life), salvage_diesel_genset)
+
+        total_diesel_genset = capital_cost_diesel_genset + fuel_gen_set + total_om_cost_diesel - salvage_diesel_genset
+
+        discounted_total_diesel_genset = capital_cost_diesel_genset / discount_factor
+
+        return total_diesel_genset, discounted_total_diesel_genset, installed_capacity_diesel_genset
 
     def transmission_network(self, peak_load, additional_mv_line_length=0, additional_transformer=0,
                              mv_distribution=False):
@@ -1318,8 +1409,8 @@ class SettlementProcessor:
         self.df.loc[self.df[SET_ELEC_CURRENT] == 1, SET_MV_CONNECT_DIST] = self.df[SET_HV_DIST_CURRENT]
         self.df[SET_MIN_TD_DIST] = self.df[[SET_MV_DIST_PLANNED, SET_HV_DIST_PLANNED]].min(axis=1)
 
-    def pre_electrification(self, grid_price, year, time_step, end_year, grid_calc, grid_capacity_limit,
-                            grid_connect_limit):
+    def pre_electrification(self, grid_price, year, time_step, end_year, grid_calc, sa_diesel_calc,
+                            grid_reliability_option, grid_capacity_limit, grid_connect_limit):
 
         """" ... """
 
@@ -1330,7 +1421,9 @@ class SettlementProcessor:
 
         # Grid-electrified settlements
         electrified_loce, electrified_investment, electrified_capacity = self.get_grid_lcoe(0, 0, 0, year, time_step,
-                                                                                            end_year, grid_calc)
+                                                                                            end_year, grid_calc,
+                                                                                            sa_diesel_calc,
+                                                                                            grid_reliability_option)
         electrified_investment = electrified_investment[0]
         electrified_capacity = electrified_capacity[0]
         grid_investment = np.where(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 1,
@@ -1341,6 +1434,7 @@ class SettlementProcessor:
         self.df[SET_LCOE_GRID + "{}".format(year)] = 99.
         self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 1,
                     SET_LCOE_GRID + "{}".format(year)] = grid_price
+
 
         # Two restrictions may be imposed on the grid. The new grid generation capacity that can be added and the
         # number of new households that can be connected. The next step calculates how much of that will be used up due
@@ -1355,13 +1449,15 @@ class SettlementProcessor:
 
         return pd.Series(grid_investment), pd.Series(grid_capacity), grid_capacity_limit, grid_connect_limit
 
-    def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc, max_intensification_cost, min_load=0):
+    def max_extension_dist(self, year, time_step, end_year, start_year, grid_calc, sa_diesel_calc,
+                           grid_reliability_option, max_intensification_cost, min_load=0):
 
         # Calculate max extension for each settlement to be connected to the grid at
         # a lower cost than least-cost off-grid alternative
 
         filter_lcoe, filter_investment, filter_capacity, peak_load = \
-            self.get_grid_lcoe(0, 0, 0, year, time_step, end_year, grid_calc, get_max_dist=True)
+            self.get_grid_lcoe(0, 0, 0, year, time_step, end_year, grid_calc, sa_diesel_calc,
+                               grid_reliability_option, get_max_dist=True)
 
         project_life = year - start_year
         years = np.arange(project_life)
@@ -1405,12 +1501,7 @@ class SettlementProcessor:
             (max_intensification_cost - filter_investment[0] / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]) / (cost_per_km / self.df[SET_NEW_CONNECTIONS + "{}".format(year)]),
                                             0)  # Todo
 
-        #print(self.df['MaxIntensificationDist'])
-        #print('')
-
         self.df.loc[peak_load < min_load, 'MaxIntensificationDist'] = 0
-
-        #print(self.df['MaxIntensificationDist'])
 
     @staticmethod
     def start_extension_points(mv_lines_path, index_parts=True):
@@ -1573,11 +1664,11 @@ class SettlementProcessor:
         self.df['X'] = lon_to_x(self.df[SET_X_DEG])
         self.df['Y'] = lat_to_y(self.df[SET_Y_DEG])
 
-    def elec_extension_numba(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
-                             grid_connect_limit, x_coordinates, y_coordinates, mg_interconnection,
-                             auto_intensification=0, prioritization=0, threshold=999999999):
+    def elec_extension_numba(self, grid_calc, sa_diesel_calc, grid_reliability_option, max_dist, year, start_year,
+                             end_year, time_step, grid_capacity_limit, grid_connect_limit, x_coordinates, y_coordinates,
+                             mg_interconnection, auto_intensification=0, prioritization=0, threshold=999999999):
 
-        #print('Starting', time.ctime())
+        # print('Starting', time.ctime())
 
         prio = int(prioritization)
         self.df['NearRoads'] = np.where(self.df[SET_ROAD_DIST] < 0.5, 0, 1)
@@ -1590,12 +1681,6 @@ class SettlementProcessor:
         self.df.loc[self.df[SET_MV_DIST_PLANNED] > max_dist, 'MaxDist' + "{}".format(year)] = -1
 
         prev_code = self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)].copy(deep=True)
-        #if year - time_step == start_year:
-        #    elecorder = self.df[SET_ELEC_ORDER].copy(deep=True)
-        #else:
-        #    elecorder = self.df[SET_ELEC_ORDER + "{}".format(year - time_step)].copy(deep=True)
-        #cell_path_real = self.df[SET_MV_CONNECT_DIST].copy(deep=True)
-        #cell_path_adjusted = list(np.zeros(len(prev_code)).tolist())
 
         new_electrified = []
         new_dists = []
@@ -1647,6 +1732,13 @@ class SettlementProcessor:
                 if len(newly_electrified) > 0:
                     print(len(newly_electrified), ' new settlements connected to the grid', time.ctime())
 
+                new_lines += new_mv_line_coords
+                new_electrified += newly_electrified
+                new_dists += newly_electrified_dists
+
+            else:
+                newly_electrified = []
+
             i += 1
             if len(newly_electrified) == 0:
                 iterate = False
@@ -1683,13 +1775,13 @@ class SettlementProcessor:
             if mg_interconnection == 1:
                 unelectrified = self.df.loc[(self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] >= 3) &
                                             (self.df['MaxIntensificationDist'] >= 0) &
-                                            #(self.df['MaxDist' + "{}".format(year)] >= 0) &
+                                            (self.df['MaxDist' + "{}".format(year)] >= 0) &
                                             (self.df['PreSelection' + "{}".format(year)] == 1) &
                                             (self.df[SET_HV_DIST_PLANNED] < max_dist)].index.tolist()
             else:
                 unelectrified = self.df.loc[((self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 3) | (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 99)) &
                                             (self.df['MaxIntensificationDist'] >= 0) &
-                                            #(self.df['MaxDist' + "{}".format(year)] >= 0) &
+                                            (self.df['MaxDist' + "{}".format(year)] >= 0) &
                                             (self.df['PreSelection' + "{}".format(year)] == 1) &
                                             (self.df[SET_HV_DIST_PLANNED] < max_dist)].index.tolist()
 
@@ -1740,7 +1832,8 @@ class SettlementProcessor:
         self.df.sort_index(inplace=True)
 
         grid_lcoe, grid_investment, grid_capacity = \
-            self.get_grid_lcoe(self.df['NewDist'], 0, 0, year, time_step, end_year, grid_calc)
+            self.get_grid_lcoe(self.df['NewDist'], 0, 0, year, time_step, end_year, grid_calc, sa_diesel_calc,
+                               grid_reliability_option)
 
         grid_lcoe = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 99, grid_lcoe[0])
         grid_investment = np.where((self.df['NewDist'] == 0) & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] > 2), 0, grid_investment[0])
@@ -1751,159 +1844,13 @@ class SettlementProcessor:
 
         self.df.sort_index(inplace=True)
 
-        #print('Finishing', time.ctime())
+        # print('Finishing', time.ctime())
 
-        return grid_lcoe, self.df['NewDist'], pd.DataFrame(grid_investment), pd.DataFrame(grid_capacity), x_coordinates, y_coordinates, feature_collection
-
-    def elec_extension(self, grid_calc, max_dist, year, start_year, end_year, time_step, grid_capacity_limit,
-                       grid_connect_limit, new_investment, new_capacity, auto_intensification=0, prioritization=0,
-                       threshold=999999999):
-        """
-        Iterate through all electrified settlements and find which settlements can be economically connected to the grid
-        Repeat with newly electrified settlements until no more are added
-        """
-
-        prio = int(prioritization)
-
-        prev_code = self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)].copy(deep=True)
-        if year - time_step == start_year:
-            elecorder = self.df[SET_ELEC_ORDER].copy(deep=True)
-        else:
-            elecorder = self.df[SET_ELEC_ORDER + "{}".format(year - time_step)].copy(deep=True)
-        grid_penalty_ratio = 1 #self.df[SET_GRID_PENALTY].copy(deep=True)
-        min_code_lcoes = self.df[SET_MIN_OFFGRID_LCOE + "{}".format(year)].copy(deep=True)
-        new_lcoes = self.df[SET_LCOE_GRID + "{}".format(year)].copy(deep=True)
-        cell_path_real = self.df[SET_MV_CONNECT_DIST].copy(deep=True)
-        cell_path_adjusted = list(np.zeros(len(prev_code)).tolist())
-        mv_planned = self.df[SET_MV_DIST_PLANNED].copy(deep=True)
-
-        # Start by identifying which settlements are grid-connected already
-        electrified = np.where(prev_code == 1, 1, 0)
-
-        # The grid may be forced to expand around existing MV lines if this option has been selected, regardless
-        # off-grid alternatives are less costly. The following section implements that
-        if (prio == 2) or (prio == 4):
-            mv_dist_adjusted = np.nan_to_num(grid_penalty_ratio * mv_planned)
-
-            intensification_lcoe, intensification_investment, intensification_capacity = \
-                self.get_grid_lcoe(dist_adjusted=mv_dist_adjusted, elecorder=0, additional_transformer=0, year=year,
-                                   time_step=time_step, end_year=end_year, grid_calc=grid_calc)
-            intensification_lcoe = new_lcoes.copy(deep=True)
-            intensification_lcoe.loc[(mv_planned < auto_intensification) & (prev_code != 1)] = 0.01
-            intensification_lcoe = pd.DataFrame(intensification_lcoe)
-            intensification_lcoe.columns = [0]
-
-            grid_capacity_limit, grid_connect_limit, cell_path_real, cell_path_adjusted, elecorder, electrified, \
-                new_lcoes, new_investment, new_capacity \
-                = self.update_grid_extension_info(grid_lcoe=intensification_lcoe, dist=mv_planned,
-                                                  dist_adjusted=mv_dist_adjusted, prev_dist=0, elecorder=elecorder,
-                                                  new_elec_order=1, max_dist=max_dist, new_lcoes=new_lcoes,
-                                                  grid_capacity_limit=grid_capacity_limit,
-                                                  grid_connect_limit=grid_connect_limit, cell_path_real=cell_path_real,
-                                                  cell_path_adjusted=cell_path_adjusted, electrified=electrified,
-                                                  year=year, grid_calc=grid_calc,
-                                                  grid_investment=intensification_investment,
-                                                  new_investment=new_investment,
-                                                  grid_capacity=intensification_capacity,
-                                                  new_capacity=new_capacity,
-                                                  threshold=threshold)
-
-        # Find the unelectrified settlements where grid can be less costly than off-grid
-        filter_lcoe, filter_investment, filter_capacity = self.get_grid_lcoe(0, 0, 0, year, time_step, end_year,
-                                                                             grid_calc)
-        filter_lcoe = filter_lcoe[0]
-        filter_lcoe.loc[electrified == 1] = 99
-        unelectrified = np.where(filter_lcoe < min_code_lcoes)
-        unelectrified = unelectrified[0].tolist()
-
-        logging.info('Initially {} electrified'.format(sum(electrified)))
-
-        # First round of extension from MV network
-        mv_dist = pd.Series(self.df[SET_MV_DIST_PLANNED])
-        mv_dist_adjusted = np.nan_to_num(grid_penalty_ratio * mv_dist)
-
-        grid_lcoe, grid_investment, grid_capacity = self.get_grid_lcoe(dist_adjusted=mv_dist_adjusted, elecorder=0,
-                                                                       additional_transformer=0, year=year,
-                                                                       time_step=time_step,
-                                                                       end_year=end_year, grid_calc=grid_calc)
-
-        grid_capacity_limit, grid_connect_limit, cell_path_real, cell_path_adjusted, elecorder, electrified, \
-            new_lcoes, new_investment, new_capacity \
-            = self.update_grid_extension_info(grid_lcoe=grid_lcoe, dist=mv_dist, dist_adjusted=mv_dist_adjusted,
-                                              prev_dist=0, elecorder=elecorder, new_elec_order=1, max_dist=max_dist,
-                                              new_lcoes=new_lcoes, grid_capacity_limit=grid_capacity_limit,
-                                              grid_connect_limit=grid_connect_limit, cell_path_real=cell_path_real,
-                                              cell_path_adjusted=cell_path_adjusted, electrified=electrified, year=year,
-                                              grid_calc=grid_calc, grid_investment=grid_investment,
-                                              new_investment=new_investment, grid_capacity=grid_capacity,
-                                              new_capacity=new_capacity,
-                                              )
-
-        #  Second round of extension from HV lines
-        hv_dist = np.nan_to_num(self.df[SET_HV_DIST_PLANNED])
-        hv_dist_adjusted = np.nan_to_num(hv_dist * grid_penalty_ratio)
-
-        grid_lcoe, grid_investment, grid_capacity = self.get_grid_lcoe(dist_adjusted=hv_dist_adjusted, elecorder=0,
-                                                                       additional_transformer=1, year=year,
-                                                                       time_step=time_step,
-                                                                       end_year=end_year, grid_calc=grid_calc)
-
-        grid_capacity_limit, grid_connect_limit, cell_path_real, cell_path_adjusted, elecorder, electrified, \
-            new_lcoes, new_investment, new_capacity \
-            = self.update_grid_extension_info(grid_lcoe=grid_lcoe, dist=hv_dist, dist_adjusted=hv_dist_adjusted,
-                                              prev_dist=0, elecorder=elecorder, new_elec_order=1, max_dist=999999,
-                                              new_lcoes=new_lcoes, grid_capacity_limit=grid_capacity_limit,
-                                              grid_connect_limit=grid_connect_limit, cell_path_real=cell_path_real,
-                                              cell_path_adjusted=cell_path_adjusted, electrified=electrified,
-                                              year=year, grid_calc=grid_calc, grid_investment=grid_investment,
-                                              new_investment=new_investment, grid_capacity=grid_capacity,
-                                              new_capacity=new_capacity,
-                                              )
-
-        # Third to last round of extension loops from electrified settlements. First considering all
-        # electrified settlements up until this point, then from the newly electrified settlements in each round
-        prev_electrified = np.zeros(len(prev_code))
-        loops = 1
-        while sum(electrified) > sum(prev_electrified):
-            new_electrified = electrified - prev_electrified
-            prev_electrified = electrified
-            logging.info('Electrification loop {} with {} electrified'.format(loops, int(sum(new_electrified))))
-            loops += 1
-
-            if sum(new_electrified) > 1:
-                # Calculating the distance and adjusted distance from each unelectrified settelement to the closest
-                # electrified settlement, as well as the electrification order an total MV distance to that electrified
-                # settlement
-                nearest_dist_adjusted, nearest_elec_order, prev_dist, nearest_dist = \
-                    self.closest_electrified_settlement(new_electrified, unelectrified, cell_path_real,
-                                                        grid_penalty_ratio, elecorder)
-
-                grid_lcoe, grid_investment, grid_capacity = self.get_grid_lcoe(dist_adjusted=nearest_dist_adjusted,
-                                                                               elecorder=nearest_elec_order,
-                                                                               additional_transformer=0, year=year,
-                                                                               time_step=time_step,
-                                                                               end_year=end_year, grid_calc=grid_calc)
-
-                grid_capacity_limit, grid_connect_limit, cell_path_real, cell_path_adjusted, elecorder, electrified, \
-                    new_lcoes, new_investment, new_capacity = \
-                    self.update_grid_extension_info(grid_lcoe=grid_lcoe, dist=nearest_dist,
-                                                    dist_adjusted=nearest_dist_adjusted,
-                                                    prev_dist=prev_dist, elecorder=elecorder,
-                                                    new_elec_order=nearest_elec_order, max_dist=max_dist,
-                                                    new_lcoes=new_lcoes, grid_capacity_limit=grid_capacity_limit,
-                                                    grid_connect_limit=grid_connect_limit,
-                                                    cell_path_real=cell_path_real,
-                                                    cell_path_adjusted=cell_path_adjusted, electrified=electrified,
-                                                    year=year, grid_calc=grid_calc, grid_investment=grid_investment,
-                                                    new_investment=new_investment, grid_capacity=grid_capacity,
-                                                    new_capacity=new_capacity,
-                                                    )
-
-        return new_lcoes, cell_path_adjusted, elecorder, cell_path_real, pd.DataFrame(new_investment), pd.DataFrame(
-            new_capacity)
+        return grid_lcoe, self.df['NewDist'], pd.DataFrame(grid_investment), pd.DataFrame(grid_capacity), \
+            x_coordinates, y_coordinates, feature_collection
 
     def get_grid_lcoe(self, dist_adjusted, elecorder, additional_transformer, year, time_step, end_year, grid_calc,
-                      get_max_dist=False):
+                      sa_diesel_calc, grid_reliability_option, get_max_dist=False):
         grid = \
             grid_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
                                start_year=year - time_step,
@@ -1918,7 +1865,12 @@ class SettlementProcessor:
                                elec_loop=elecorder,
                                additional_transformer=additional_transformer,
                                capacity_factor=grid_calc.capacity_factor,
-                               get_max_dist=get_max_dist)
+                               get_max_dist=get_max_dist,
+                               unmet_demand=self.df[SET_UNMET_DEMAND + "{}".format(year)],
+                               fuel_cost_settlement=self.df[SET_MG_DIESEL_FUEL + "{}".format(year)],
+                               sa_diesel_calc=sa_diesel_calc,
+                               grid_reliability_option=grid_reliability_option
+                               )
 
         if get_max_dist:
             return grid[0], grid[1], grid[2], grid[3]
@@ -2182,6 +2134,14 @@ class SettlementProcessor:
         self.calculate_new_connections(year, time_step, num_people_per_hh_rural, num_people_per_hh_urban, moz)
         self.set_residential_demand(rural_tier, urban_tier)
         self.calculate_total_demand_per_settlement(year, time_step)
+
+    def calculate_unmet_demand(self, year, reliability=0.963):
+        if SET_GRID_RELIABILITY in self.df :
+            self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
+                self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - self.df[SET_GRID_RELIABILITY])
+        else:
+            self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
+                self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - reliability)
 
     @staticmethod
     def optimize_mini_grid(ghi_curve, temp, energy, tier, diesel_price, start_year, end_year,
@@ -2615,7 +2575,8 @@ class SettlementProcessor:
                                    num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
                                    grid_cell_area=self.df[SET_GRID_CELL_AREA],
                                    additional_mv_line_length=self.df[SET_HYDRO_DIST],
-                                   capacity_factor=mg_hydro_calc.capacity_factor)
+                                   capacity_factor=mg_hydro_calc.capacity_factor
+                                   )
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_HYDRO + "{}".format(year)] = 99
         self.df.loc[self.df[SET_MV_DIST_CURRENT] < mg_min_grid_dist, SET_LCOE_MG_HYDRO + "{}".format(year)] = 99
@@ -2631,7 +2592,8 @@ class SettlementProcessor:
                                        prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
                                        num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
                                        grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                       capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR)
+                                       capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR
+                                       )
         self.df.loc[self.df[SET_LCOE_MG_PV_HYBRID + "{}".format(year)] > 99, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99

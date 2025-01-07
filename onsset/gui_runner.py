@@ -48,9 +48,11 @@ elif choice == 2:
     summary_folder = filedialog.askdirectory()
     messagebox.showinfo('OnSSET', 'Open the file with hourly PV data')
     pv_path = filedialog.askopenfilename()
+    messagebox.showinfo('OnSSET', 'Open the file with hourly wind data')
+    wind_path = filedialog.askopenfilename()
     messagebox.showinfo('OnSSET', 'Open the MV line data')
     mv_path = filedialog.askopenfilename()
 
-    scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv_path, mv_path)
+    scenario(specs_path, calibrated_csv_path, results_folder, summary_folder, pv_path, wind_path, mv_path)
 
 
