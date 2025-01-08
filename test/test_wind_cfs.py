@@ -10,7 +10,7 @@ from pytest import fixture, raises, approx
 class TestCalcWind:
 
     @fixture
-    def setup_settlementprocessor(self) -> SettlementProcessor:
+    def setup_settlementprocessor(self):
         csv_path = os.path.join('test', 'test_data', 'dj-test.csv')
         settlementprocessor = SettlementProcessor(csv_path)
 

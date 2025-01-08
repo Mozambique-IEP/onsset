@@ -107,7 +107,7 @@ SET_SA_DIESEL_FUEL = 'SADieselFuelCost'
 SET_MG_DIESEL_FUEL = 'MGDieselFuelCost'
 SET_MG_DIST = 'MGDist'
 SET_GRID_RELIABILITY = 'GridReliability' #To Calculate grid reliability
-SET_UNMET_DEMAND = 'UnmetDemand' #To Calculate grid reliability
+SET_UNMET_DEMAND = 'UnmetDemand' # To Calculate grid reliability
 SET_BACKUP_CAP = "BackupCap"
 SET_BACKUP_LCOE ="BackUpLCOE"
 
@@ -2136,7 +2136,7 @@ class SettlementProcessor:
         self.calculate_total_demand_per_settlement(year, time_step)
 
     def calculate_unmet_demand(self, year, reliability=0.963):
-        if SET_GRID_RELIABILITY in self.df :
+        if SET_GRID_RELIABILITY in self.df:
             self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
                 self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - self.df[SET_GRID_RELIABILITY])
         else:

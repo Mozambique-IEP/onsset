@@ -39,7 +39,10 @@ def run_analysis(tmpdir):
 
     calibration(specs_path, csv_path, specs_path_calib, calibrated_csv_path)
 
-    scenario(specs_path_calib, calibrated_csv_path, tmpdir, tmpdir)
+    pv_path = os.path.join('test', 'test_data', 'dj-2-pv.csv')
+    wind_path = os.path.join('test', 'test_data', 'dj-2-wind.csv')
+    mv_path = os.path.join('test', 'test_data', 'dj-mv-lines.geojson')
+    scenario(specs_path_calib, calibrated_csv_path, tmpdir, tmpdir, pv_path, wind_path, mv_path)
 
     actual = os.path.join(tmpdir, 'dj-1-1_1_1_1_0_0_summary.csv')
     expected = os.path.join('test', 'test_results', 'expected_summary.csv')
