@@ -261,8 +261,8 @@ def calculate_hybrid_lcoe(diesel_price, end_year, start_year, annual_demand,
         fuel_costs = fuel_usage * diesel_price
         om_costs = (pv_panel_size * (pv_cost + charge_controller) * pv_om + diesel_capacity * diesel_cost * diesel_om)
 
-        total_fuel_cost += fuel_costs / (1 + discount_rate) ** year
-        total_om_cost += om_costs / (1 + discount_rate) ** year
+        total_fuel_cost += fuel_costs / ((1 + discount_rate) ** year)
+        total_om_cost += om_costs / ((1 + discount_rate) ** year)
 
         # Here we check if there is need for investment/reinvestment
         if year % battery_inverter_life == 0:

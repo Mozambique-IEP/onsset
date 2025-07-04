@@ -1848,6 +1848,8 @@ class SettlementProcessor:
                 new_lines += new_mv_line_coords
                 new_electrified += newly_electrified
                 new_dists += newly_electrified_dists
+            else:
+                newly_electrified = []
 
             i += 1
             if len(newly_electrified) == 0:
