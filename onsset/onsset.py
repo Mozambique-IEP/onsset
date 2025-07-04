@@ -106,10 +106,10 @@ SET_MIN_TD_DIST = 'minTDdist'
 SET_SA_DIESEL_FUEL = 'SADieselFuelCost'
 SET_MG_DIESEL_FUEL = 'MGDieselFuelCost'
 SET_MG_DIST = 'MGDist'
-SET_GRID_RELIABILITY = 'GridReliability' #To Calculate grid reliability
-SET_UNMET_DEMAND = 'UnmetDemand' #To Calculate grid reliability
+SET_GRID_RELIABILITY = 'GridReliability'  # To Calculate grid reliability
+SET_UNMET_DEMAND = 'UnmetDemand'  # To Calculate grid reliability
 SET_BACKUP_CAP = "BackupCap"
-SET_BACKUP_LCOE ="BackUpLCOE"
+SET_BACKUP_LCOE = "BackUpLCOE"
 
 # General
 LHV_DIESEL = 9.9445485  # (kWh/l) lower heating value
@@ -124,7 +124,7 @@ class Technology:
 
     def __init__(self,
                  tech_life=0,  # in years
-                 base_to_peak_load_ratio=0,
+                 base_to_peak_load_ratio=1,
                  distribution_losses=0,  # percentage
                  connection_cost_per_hh=0,  # USD/hh
                  om_costs=0.0,  # OM costs as percentage of capital costs
@@ -146,7 +146,19 @@ class Technology:
                  hybrid_capacity=0,
                  hybrid_fuel=0,
                  discount_rate=0.08,
-                 cnse=0
+                 cnse=0,
+                 mv_line_type=33,
+                 mv_line_amperage_limit=8.0,
+                 mv_line_cost=7000,
+                 mv_line_max_length=50,
+                 lv_line_type=0.240,
+                 lv_line_cost=4250,
+                 lv_line_max_length=0.5,
+                 service_transf_type=50,
+                 service_transf_cost=4250,
+                 max_nodes_per_serv_trans=300,
+                 mv_lv_sub_station_type=400,
+                 mv_lv_sub_station_cost=10000,
                  ):  # percentage
 
         self.distribution_losses = distribution_losses
@@ -172,15 +184,23 @@ class Technology:
         self.hybrid_capacity = hybrid_capacity
         self.hybrid_fuel = hybrid_fuel
         self.discount_rate = discount_rate
-        self.cnse=cnse
+        self.cnse=cnse  # cost of non served energy to include penalty in grid lcoe for low reliability grid
+        self.mv_line_type = mv_line_type  # kV
+        self.mv_line_amperage_limit = mv_line_amperage_limit  # Ampere (A)
+        self.mv_line_cost = mv_line_cost  # $/km  for 11-33 kV
+        self.mv_line_max_length = mv_line_max_length
+        self.lv_line_type = lv_line_type  # kV
+        self.lv_line_cost = lv_line_cost  # $/km
+        self.lv_line_max_length = lv_line_max_length  # km
+        self.service_transf_type = service_transf_type  # kVa
+        self.service_transf_cost = service_transf_cost  # $/unit
+        self.max_nodes_per_serv_trans = max_nodes_per_serv_trans  # max number of nodes served by a service transformer
+        self.mv_lv_sub_station_type = mv_lv_sub_station_type  # kVa
+        self.mv_lv_sub_station_cost = mv_lv_sub_station_cost  # $/unit
 
     @classmethod
     def set_default_values(cls, base_year, start_year, end_year, hv_line_type=69, hv_line_cost=53000,
-                           mv_line_type=33, mv_line_amperage_limit=8.0, mv_line_cost=7000, mv_line_max_length=50,
-                           lv_line_type=0.240, lv_line_cost=4250, lv_line_max_length=0.5, service_transf_type=50,
-                           service_transf_cost=4250, max_nodes_per_serv_trans=300, mv_lv_sub_station_type=400,
-                           mv_lv_sub_station_cost=10000, hv_mv_sub_station_cost=25000, hv_mv_substation_type=10000,
-                           power_factor=0.9, load_moment=9643, cnse=0):
+                           hv_mv_sub_station_cost=25000, hv_mv_substation_type=10000, power_factor=0.9, load_moment=9643):
         """Initialises the class with parameter values common to all Technologies
         """
         cls.base_year = base_year
@@ -191,23 +211,10 @@ class Technology:
         #cls.discount_rate = discount_rate
         cls.hv_line_type = hv_line_type  # kV
         cls.hv_line_cost = hv_line_cost  # $/km for 69kV
-        cls.mv_line_type = mv_line_type  # kV
-        cls.mv_line_amperage_limit = mv_line_amperage_limit  # Ampere (A)
-        cls.mv_line_cost = mv_line_cost  # $/km  for 11-33 kV
-        cls.mv_line_max_length = mv_line_max_length
-        cls.lv_line_type = lv_line_type  # kV
-        cls.lv_line_cost = lv_line_cost  # $/km
-        cls.lv_line_max_length = lv_line_max_length  # km
-        cls.service_transf_type = service_transf_type  # kVa
-        cls.service_transf_cost = service_transf_cost  # $/unit
-        cls.max_nodes_per_serv_trans = max_nodes_per_serv_trans  # max number of nodes served by a service transformer
-        cls.mv_lv_sub_station_type = mv_lv_sub_station_type  # kVa
-        cls.mv_lv_sub_station_cost = mv_lv_sub_station_cost  # $/unit
         cls.hv_mv_substation_type = hv_mv_substation_type  # kVA
         cls.hv_mv_sub_station_cost = hv_mv_sub_station_cost  # $/unit
         cls.power_factor = power_factor
         cls.load_moment = load_moment  # for 50mm aluminum conductor under 5% voltage drop (kW m)
-        cls.cnse = cnse  # cost of non served energy to include penalty in grid lcoe for low reliability grid
 
     def get_lcoe(self, energy_per_cell, people, num_people_per_hh, start_year, end_year, new_connections,
                  total_energy_per_cell, prev_code, grid_cell_area, sa_diesel_calc={}, unmet_demand=0, additional_mv_line_length=0.0,
@@ -283,9 +290,15 @@ class Technology:
                                  elec_loop,
                                  penalty,
                                  )
+
         generation_per_year = pd.Series(generation_per_year)
         peak_load = pd.Series(peak_load)
         td_investment_cost = pd.Series(td_investment_cost)
+
+        if self.hybrid:
+            print('Hybrid: ', td_investment_cost)
+        if get_max_dist:
+            print('Grid: ', td_investment_cost)
 
         td_investment_cost = td_investment_cost * grid_penalty_ratio
         td_om_cost = td_investment_cost * self.om_of_td_lines * penalty
@@ -301,17 +314,29 @@ class Technology:
             else:
                 cap_cost.loc[(installed_capacity < key) & (cap_cost == 0)] = self.capital_cost[key]
 
-        capital_investment = installed_capacity * cap_cost # * penalty
+        capital_investment = installed_capacity * cap_cost  # * penalty
         total_om_cost = td_om_cost + (cap_cost * penalty * self.om_costs * installed_capacity)
         total_investment_cost = td_investment_cost + capital_investment
 
+        if get_max_dist:
+            print('Capital investment: ', capital_investment)
+
         if self.grid_price > 0:
+            #print('Grid')
             fuel_cost = self.grid_price
+            #print(td_investment_cost.sum(), hv.sum(), mv.sum(), lv.sum(), service_transf.sum(), connection.sum())
+            #print(self.hv_line_cost, self.mv_line_cost, self.lv_line_cost, self.service_transf_cost)
+
+        #if self.hybrid:
+            #print('Hybrid')
+            #print(td_investment_cost.sum(), hv.sum(), mv.sum(), lv.sum(), service_transf.sum(), connection.sum())
+            #print(self.hv_line_cost, self.mv_line_cost, self.lv_line_cost, self.service_transf_cost)
 
         # Perform the time-value LCOE calculation
         project_life = end_year - self.base_year + 1
         reinvest_year = 0
-        step = start_year - self.base_year
+        #step = start_year - self.base_year
+        step = 0  # ToDo check
         # If the technology life is less than the project life, we will have to invest twice to buy it again
         if self.tech_life + step < project_life:
             reinvest_year = self.tech_life + step
@@ -372,6 +397,8 @@ class Technology:
 
         investment_cost = (np.sum(discounted_investments, axis=1) + np.sum(discounted_grid_capacity_investments, axis=1) + np.sum(discounted_costs_backup, axis=1))
         discounted_costs = (investments + operation_and_maintenance + fuel - salvage + total_costs_reliability) / discount_factor
+        #investment_cost = np.sum(discounted_investments, axis=1) + np.sum(discounted_grid_capacity_investments, axis=1)
+        #discounted_costs = (investments + operation_and_maintenance + fuel - salvage) / discount_factor
         discounted_generation = el_gen / discount_factor
         lcoe = np.sum(discounted_costs, axis=1) / np.sum(discounted_generation, axis=1)
         # lcoe = pd.DataFrame(lcoe[:, np.newaxis])
@@ -381,6 +408,11 @@ class Technology:
         lcoe = pd.DataFrame(lcoe)
         investment_cost = pd.DataFrame(investment_cost)
         installed_capacity = pd.DataFrame(installed_capacity + backup_capacity)
+
+        if self.hybrid:
+            print('Hybrid: ', lcoe, lcoe + pd.DataFrame(self.hybrid_fuel))
+        if get_max_dist:
+            print('Grid: ', lcoe)
 
         if get_max_dist:
             return lcoe, investment_cost, installed_capacity, peak_load
@@ -458,8 +490,7 @@ class Technology:
 
         return total_diesel_genset, discounted_total_diesel_genset, installed_capacity_diesel_genset
 
-    def transmission_network(self, peak_load, additional_mv_line_length=0, additional_transformer=0,
-                             mv_distribution=False):
+    def transmission_network(self, peak_load, additional_mv_line_length=0, additional_transformer=0):
         """This method calculates the required components for connecting the settlement
         Settlements can be connected to grid or a hydropower source
         This includes potentially HV lines, MV lines and substations
@@ -472,8 +503,6 @@ class Technology:
             Distance to connect the settlement
         additional_transformer : int
             If a transformer is needed on other end to connect to HV line
-        mv_distribution : bool
-            True if distribution network in settlement contains MV lines
 
         Notes
         -----
@@ -508,20 +537,17 @@ class Technology:
 
         return hv_km, mv_km, no_of_hv_mv_subs, no_of_mv_lv_subs
 
-    def distribution_network(self, people, energy_per_cell, num_people_per_hh, grid_cell_area,
-                             productive_nodes=0):
+    def distribution_network(self, connections, energy_per_cell, grid_cell_area, productive_nodes=0):
         """This method calculates the required components for the distribution network
         This includes potentially MV lines, LV lines and service transformers
 
         Arguments
         ---------
-        people : float
+        connections : pd.Series
             Number of people in settlement
-        energy_per_cell : float
+        energy_per_cell : pd.Series
             Annual energy demand in settlement (kWh)
-        num_people_per_hh : float
-            Number of people per household in settlement
-        grid_cell_area : float
+        grid_cell_area : pd.Series
             Area of settlement (km2)
         productive_nodes : int
             Additional connections (schools, health facilities, shops)
@@ -543,7 +569,7 @@ class Technology:
         else:
             s_max = peak_load / self.power_factor
             max_transformer_area = pi * self.lv_line_max_length ** 2
-            total_nodes = (people / num_people_per_hh) + productive_nodes
+            total_nodes = connections + productive_nodes
 
             no_of_service_transf = np.ceil(
                 np.maximum(s_max / self.service_transf_type, np.maximum(total_nodes / self.max_nodes_per_serv_trans,
@@ -607,15 +633,14 @@ class Technology:
         # Start by calculating the distribution network required to meet all of the demand
         cluster_mv_lines_length_total, cluster_lv_lines_length_total, no_of_service_transf_total, \
             generation_per_year_total, peak_load_total, total_nodes_total = \
-            self.distribution_network(people, total_energy_per_cell, num_people_per_hh, grid_cell_area,
+            self.distribution_network(round(people / num_people_per_hh), total_energy_per_cell, grid_cell_area,
                                       productive_nodes)
 
         # Next calculate the network that is already there
         cluster_mv_lines_length_existing, cluster_lv_lines_length_existing, no_of_service_transf_existing, \
             generation_per_year_existing, peak_load_existing, total_nodes_existing = \
-            self.distribution_network(np.maximum((people - new_connections), 1),
-                                      (total_energy_per_cell - energy_per_cell),
-                                      num_people_per_hh, grid_cell_area, productive_nodes)
+            self.distribution_network(np.maximum((round(people / num_people_per_hh) - new_connections), 1),
+                                      (total_energy_per_cell - energy_per_cell), grid_cell_area, productive_nodes)
 
         # Then calculate the difference between the two
         mv_lines_distribution_length_additional = \
@@ -628,18 +653,16 @@ class Technology:
         total_nodes_additional = np.maximum(total_nodes_total - total_nodes_existing, 0)
 
         # Examine if there are any MV lines in the distribution network, used to determine transformer type
-        mv_distribution = np.where(mv_lines_distribution_length_additional > 0, True, False)
+        mv_distribution = np.where(mv_lines_distribution_length_additional > 0, True, False)  # ToDo check if needed
 
         # Then calculate the transmission network (HV or MV lines plus transformers) using the same methodology
         hv_lines_total_length_total, mv_lines_connection_length_total, no_of_hv_mv_substation_total, \
             no_of_mv_lv_substation_total = \
-            self.transmission_network(peak_load_total, additional_mv_line_length, additional_transformer,
-                                      mv_distribution=mv_distribution)
+            self.transmission_network(peak_load_total, additional_mv_line_length, additional_transformer)
 
         hv_lines_total_length_existing, mv_lines_connection_length_existing, no_of_hv_mv_substation_existing, \
             no_of_mv_lv_substation_existing = \
-            self.transmission_network(peak_load_existing, additional_mv_line_length, additional_transformer,
-                                      mv_distribution=mv_distribution)
+            self.transmission_network(peak_load_existing, additional_mv_line_length, additional_transformer)
 
         hv_lines_total_length_additional = np.maximum(hv_lines_total_length_total - hv_lines_total_length_existing, 0)
         mv_lines_connection_length_additional = \
@@ -651,15 +674,14 @@ class Technology:
 
         # If no distribution network is present, perform the calculations only once
         mv_lines_distribution_length_new, total_lv_lines_length_new, num_transformers_new, generation_per_year_new, \
-            peak_load_new, total_nodes_new = self.distribution_network(people, energy_per_cell, num_people_per_hh,
-                                                                       grid_cell_area, productive_nodes)
+            peak_load_new, total_nodes_new = self.distribution_network(round(people / num_people_per_hh),
+                                                                       energy_per_cell, grid_cell_area, productive_nodes)
 
         mv_distribution = np.where(mv_lines_distribution_length_new > 0, True, False)
 
         hv_lines_total_length_new, mv_lines_connection_length_new, no_of_hv_mv_substation_new, \
             no_of_mv_lv_substation_new, = \
-            self.transmission_network(peak_load_new, additional_mv_line_length, additional_transformer,
-                                      mv_distribution=mv_distribution)
+            self.transmission_network(peak_load_new, additional_mv_line_length, additional_transformer)
 
         mv_lines_distribution_length = np.where((prev_code != 3) & (prev_code != 99),
                                                 mv_lines_distribution_length_additional,
@@ -1459,7 +1481,8 @@ class SettlementProcessor:
             self.get_grid_lcoe(0, 0, 0, year, time_step, end_year, grid_calc, sa_diesel_calc,
                                grid_reliability_option, get_max_dist=True)
 
-        project_life = year - start_year
+        project_life = end_year - start_year + 1
+
         years = np.arange(project_life)
         step = (year - time_step) - start_year
         prev_code = self.df[SET_ELEC_FINAL_CODE + '{}'.format(year - time_step)]
@@ -1476,6 +1499,7 @@ class SettlementProcessor:
         discounted_generation = pd.Series(discounted_generation)
         # max_discounted_investments = filter_lcoe[0] * discounted_generation
         max_discounted_investments = (self.df['Minimum_LCOE_Off_grid{}'.format(year)] - filter_lcoe[0]) * discounted_generation
+        self.df['FilterLCOE' + "{}".format(year)] = filter_lcoe[0]
 
         max_investment = max_discounted_investments * discount_factor[year - time_step - start_year]
 
@@ -1491,6 +1515,19 @@ class SettlementProcessor:
         mv_cost_per_km = mv_lines * grid_calc.mv_line_cost
         hv_cost_per_km = hv_lines * grid_calc.hv_line_cost
         cost_per_km = mv_cost_per_km + hv_cost_per_km
+
+        reinvest_year = 0
+        if grid_calc.tech_life + step < project_life:
+            reinvest_year = grid_calc.tech_life + step
+
+        if reinvest_year > 0:
+            used_life = (project_life - step) - grid_calc.tech_life
+        else:
+            used_life = project_life - step - 1
+
+        salvage = (1 - used_life / grid_calc.tech_life) * cost_per_km
+
+        cost_per_km -= salvage
 
         max_dist = max_investment / cost_per_km
         self.df['MaxDist'] = max_dist
@@ -2049,14 +2086,14 @@ class SettlementProcessor:
             # Define residential demand
             if wb_tier_rural == 'Custom':
                 self.df.loc[self.df[SET_URBAN] == 0, SET_HH_DEMAND] = self.df[
-                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)] * self.df[SET_NUM_PEOPLE_PER_HH]
+                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)]  # * self.df[SET_NUM_PEOPLE_PER_HH]
             else:
                 self.df.loc[self.df[SET_URBAN] == 0, SET_HH_DEMAND] = self.df[
                     SET_RESIDENTIAL_TIER + str(wb_tier_rural)]
 
             if wb_tier_urban_centers == 'Custom':
                 self.df.loc[self.df[SET_URBAN] > 0, SET_HH_DEMAND] = self.df[
-                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)] * self.df[SET_NUM_PEOPLE_PER_HH]
+                    SET_RESIDENTIAL_TIER + str(wb_tier_urban_centers)] #* self.df[SET_NUM_PEOPLE_PER_HH]
             else:
                 self.df.loc[self.df[SET_URBAN] == 1, SET_HH_DEMAND] = self.df[
                     SET_RESIDENTIAL_TIER + str(wb_tier_urban_clusters)]
@@ -2104,11 +2141,11 @@ class SettlementProcessor:
             self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
 
         self.df.loc[self.df[SET_URBAN] == 0, SET_TOTAL_ENERGY_PER_CELL] = \
-            self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
+            self.df[SET_HH_DEMAND] * (self.df[SET_POP + "{}".format(year)] / self.df[SET_NUM_PEOPLE_PER_HH]) + produse
         self.df.loc[self.df[SET_URBAN] == 1, SET_TOTAL_ENERGY_PER_CELL] = \
-            self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
+            self.df[SET_HH_DEMAND] * (self.df[SET_POP + "{}".format(year)] / self.df[SET_NUM_PEOPLE_PER_HH]) + produse
         self.df.loc[self.df[SET_URBAN] == 2, SET_TOTAL_ENERGY_PER_CELL] = \
-            self.df[SET_HH_DEMAND] * self.df[SET_NEW_CONNECTIONS + "{}".format(year)] + produse
+            self.df[SET_HH_DEMAND] * (self.df[SET_POP + "{}".format(year)] / self.df[SET_NUM_PEOPLE_PER_HH]) + produse
 
     def calculate_demand(self, year, num_people_per_hh_rural, num_people_per_hh_urban,
                          time_step, urban_tier, rural_tier, moz=False):
@@ -2136,7 +2173,7 @@ class SettlementProcessor:
         self.calculate_total_demand_per_settlement(year, time_step)
 
     def calculate_unmet_demand(self, year, reliability=0.963):
-        if SET_GRID_RELIABILITY in self.df :
+        if SET_GRID_RELIABILITY in self.df:
             self.df[SET_UNMET_DEMAND + "{}".format(year)] = \
                 self.df[SET_ENERGY_PER_CELL + "{}".format(year)] * (1 - self.df[SET_GRID_RELIABILITY])
         else:
@@ -2594,12 +2631,13 @@ class SettlementProcessor:
                                        grid_cell_area=self.df[SET_GRID_CELL_AREA],
                                        capacity_factor=self.df[SET_GHI] / HOURS_PER_YEAR
                                        )
+
         self.df.loc[self.df[SET_LCOE_MG_PV_HYBRID + "{}".format(year)] > 99, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
         self.df.loc[self.df[SET_MV_DIST_CURRENT] < mg_min_grid_dist, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
 
-        self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 8, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 0.01 # ToDo ensure remain mg
+        self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 5, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 0.01 # ToDo ensure remain mg
 
         # logging.info('Calculate minigrid PV LCOE')
         # self.df[SET_LCOE_MG_PV + "{}".format(year)], mg_pv_investment, mg_pv_capacity = \
@@ -2617,15 +2655,15 @@ class SettlementProcessor:
         logging.info('Calculate minigrid Wind Hybrid LCOE')
         self.df[SET_LCOE_MG_WIND + "{}".format(year)], mg_wind_investment, mg_wind_capacity = \
             mg_wind_hybrid_calc.get_lcoe(energy_per_cell=self.df[SET_ENERGY_PER_CELL + "{}".format(year)],
-                                       start_year=year - time_step,
-                                       end_year=end_year,
-                                       people=self.df[SET_POP + "{}".format(year)],
-                                       new_connections=self.df[SET_NEW_CONNECTIONS + "{}".format(year)],
-                                       total_energy_per_cell=self.df[SET_TOTAL_ENERGY_PER_CELL],
-                                       prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
-                                       num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
-                                       grid_cell_area=self.df[SET_GRID_CELL_AREA],
-                                       capacity_factor=self.df[SET_WINDCF])
+                                         start_year=year - time_step,
+                                         end_year=end_year,
+                                         people=self.df[SET_POP + "{}".format(year)],
+                                         new_connections=self.df[SET_NEW_CONNECTIONS + "{}".format(year)],
+                                         total_energy_per_cell=self.df[SET_TOTAL_ENERGY_PER_CELL],
+                                         prev_code=self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)],
+                                         num_people_per_hh=self.df[SET_NUM_PEOPLE_PER_HH],
+                                         grid_cell_area=self.df[SET_GRID_CELL_AREA],
+                                         capacity_factor=self.df[SET_WINDCF])
         self.df.loc[self.df[SET_LCOE_MG_WIND + "{}".format(year)] > 99, SET_LCOE_MG_WIND + "{}".format(year)] = 99
 
         self.df.loc[self.df[SET_POP + "{}".format(year)] < min_mg_size, SET_LCOE_MG_WIND + "{}".format(year)] = 99
