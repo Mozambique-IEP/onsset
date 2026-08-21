@@ -33,16 +33,16 @@ conda env create --name moz_onsset_env --file moz_onsset_env.yml
 
 | Dataset | Target location | Description | SDI Location | Alternative location |
 |---------|-----------------|-------------|--------------|----|
-| InputFile.csv | data/inputs/extracted_csv | Input file with extracted GIS-data for every settlement in Mozambique | /datasets/vectorfile/XX | - |
+| InputFile.csv | data/inputs/extracted_csv | Input file with extracted GIS-data for every settlement in Mozambique | https://piem.mireme.gov.mz/en/admin/datasets/referencedataset/6 | - |
 
 ### Scenario run(s)
 
 | Dataset | Target location | Description | SDI Location | Alternative location |
 |---------|-----------------|-------------|--------------|----|
-| Calibrated.csv | data/inputs/calibrated_csv | Calibrated input file with GIS-data and calibrated data for every settlement in Mozambique | /datasets/vectorfile/XX | - |
-| MV_existing_and_proposed.geojson | data/inputs/MV | GIS-file of existing MV lines as well as any lines already committed to be built | /datasets/vectorfile/XX | - |
-| mz-2-pv.csv | data/inputs/pv | CSV-file with hourly PV data for Mozambique | /datasets/vectorfile/XX | [EnergyData.Info](https://energydata.info/dataset/mozambique-global-electrification-platform-gep) |
-| mz-2-wind.csv | data/inputs/wind | CSV-file with hourly wind data for Mozambique | /datasets/vectorfile/XX | [EnergyData.Info](https://energydata.info/dataset/mozambique-global-electrification-platform-gep) |
+| Calibrated.csv | data/inputs/calibrated_csv | Calibrated input file with GIS-data and calibrated data for every settlement in Mozambique | https://piem.mireme.gov.mz/en/admin/datasets/referencedataset/7 | - |
+| MV_existing_and_proposed.geojson | data/inputs/MV | GIS-file of existing MV lines as well as any lines already committed to be built | https://piem.mireme.gov.mz/en/admin/datasets/vectordataset/32/ | - |
+| mz-2-pv.csv | data/inputs/pv | CSV-file with hourly PV data for Mozambique | https://piem.mireme.gov.mz/en/admin/datasets/referencedataset/8 | [EnergyData.Info](https://energydata.info/dataset/mozambique-global-electrification-platform-gep) |
+| mz-2-wind.csv | data/inputs/wind | CSV-file with hourly wind data for Mozambique | https://piem.mireme.gov.mz/en/admin/datasets/referencedataset/9 | [EnergyData.Info](https://energydata.info/dataset/mozambique-global-electrification-platform-gep) |
 
 ## Output data
 
@@ -53,7 +53,6 @@ The csv-file contains all of the columns described in the Output data section of
 
 | Column | Type | Unit | Description |
 |---------|-----------------|-------------|--------------|
-| WindCF |	Float |	%	| Estimated capacity factor for wind technologies; certain technical parameters are taken into consideration |
 | PopStartYear |	Float |	people |	Population in the settlement in the start year of the analysis |
 | ElecPopCalib |	Float |	people |	Calibrated version of ElecPop in the start of the analysis |
 | NumPeoplePerHH |	Float |	people |	Number of people in household; value for urban or rural respective to how the settlement is characterized |
@@ -70,6 +69,7 @@ This file contains all of the columns included in the *OnSSET_InputFile_Calibrat
 
 | Column | Type | Unit | Description |
 |---------|-----------------|-------------|--------------|
+| WindCF |	Float |	%	| Estimated capacity factor for wind technologies; certain technical parameters are taken into consideration |
 | Pop20*XX* |	Float |	people |	Projected population at the year |
 | NewConnections20*XX* |	Float |	Households |	Households that need to be electrified by the year |
 | EnergyPerSettlement20*XX* |	Float |	kWh |	Estimated electricity demand target in the settlement based on new connections |
