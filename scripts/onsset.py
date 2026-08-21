@@ -8,12 +8,12 @@ from scipy.optimize import differential_evolution, Bounds
 try:
     from hybrids import *
 except:
-    from onsset.hybrids import *
+    from scripts.hybrids import *
 
 try:
     from hybrids_wind import *
 except:
-    from onsset.hybrids_wind import *
+    from scripts.hybrids_wind import *
 
 import geojson
 from shapely.geometry import shape, Point
@@ -2234,7 +2234,7 @@ class SettlementProcessor:
                               end_year=end_year,
                               )
 
-        return result[0], result[3], result[8] + result[9], result[4], 1 - result[2], result[8], result[9], result[6] # Check PV vs Diesel capacity
+        return result[0], result[3], result[8] + result[9], result[4], 1 - result[2], result[8], result[9], result[6]
 
     def pv_hybrids_lcoe(self, year, time_step, end_year, mg_pv_hybrid_specs, pv_folder_path=r'../test_data'):
         #logging.info('Starting hybrid gen lcoe')
@@ -2285,8 +2285,6 @@ class SettlementProcessor:
 
     def pv_hybrids_lcoe_lookuptable(self, year, time_step, end_year, mg_pv_hybrid_specs, pv_path=r'../test_data'):
         logging.info('Starting hybrid gen lcoe')
-        # lats = sorted(self.df['Y_deg'].round().unique())
-        # longs = sorted(self.df['X_deg'].round().unique())
 
         self.df['PVHybridGenLCOE' + "{}".format(year)] = 0.
 
@@ -2316,7 +2314,7 @@ class SettlementProcessor:
             for g in ghi_range:
                 for d in diesel_range:
                     gen_lcoe, inv, cap, fuel_cost, ren, pv, diesel, battery = \
-                        self.optimize_mini_grid(ghi_curve * g * 1000 / ghi_curve.sum(), #((ghi_curve.sum() / 1000) / g),
+                        self.optimize_mini_grid(ghi_curve * g * 1000 / ghi_curve.sum(),
                                                 temp,
                                                 10000,
                                                 t,
@@ -2355,7 +2353,7 @@ class SettlementProcessor:
         self.df['PotentialMG'] = np.where(
             ((self.df[SET_POP + "{}".format(year)] > mg_pv_hybrid_specs['min_mg_connections'])
              & (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] != 1) &
-             (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] != 10)) |
+             (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] != 2)) |
             (self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 5), 1, 0)
 
         hybrid_series = self.df.apply(
@@ -2379,7 +2377,7 @@ class SettlementProcessor:
 
         self.df['RenewableShare' + "{}".format(year)] = hybrid_series[4]
         self.df['PVHybridGenCost' + "{}".format(year)] = hybrid_series[0]
-        self.df['PVHybridGenCap' + "{}".format(year)] = hybrid_series[1] * self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000 # ToDo check
+        self.df['PVHybridGenCap' + "{}".format(year)] = hybrid_series[1] * self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000
         self.df['PVHybridPVCap' + "{}".format(year)] = hybrid_series[5] * self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000
         self.df['PVHybridDieselCap' + "{}".format(year)] = hybrid_series[6] * self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000
         self.df['PVHybridBattCap' + "{}".format(year)] = hybrid_series[7] * self.df[SET_ENERGY_PER_CELL + "{}".format(year)] / 10000
@@ -2433,21 +2431,6 @@ class SettlementProcessor:
             for i in prange(365):
                 for j in prange(24):
                     hour_numbers[i * 24 + j] = j
-
-            # def opt_func(X):
-            #     lcoe = find_least_cost_option_wind(X, hourly_wind, hour_numbers, load_curve, inv_eff, n_dis, n_chg,
-            #                                        dod_max, diesel_price, end_year, start_year, wind_cost,
-            #                                        charge_controller, wind_om, diesel_cost, diesel_om,
-            #                                        battery_inverter_life, battery_inverter_cost, diesel_life,
-            #                                        wind_life, battery_cost, discount_rate, lpsp_max, diesel_limit,
-            #                                        full_life_cycles)[0]
-            #
-            #     return lcoe
-            #
-            # ret = differential_evolution(opt_func, bounds, popsize=15,
-            #                              init='latinhypercube')  # init='halton' on newer env
-            #
-            # X = [ret.x[0], ret.x[1], ret.x[2]]
 
             X = [(wind_bounds[0] + wind_bounds[1])/2, (battery_bounds[0] + battery_bounds[1])/2, (diesel_bounds[0] + diesel_bounds[1])/2]
 
@@ -2639,7 +2622,7 @@ class SettlementProcessor:
         self.df.loc[(self.df[SET_POP + "{}".format(year)] / self.df[SET_NUM_PEOPLE_PER_HH]) < min_mg_size, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
         self.df.loc[self.df[SET_MV_DIST_CURRENT] < mg_min_grid_dist, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 99
 
-        self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 5, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 0.01 # ToDo ensure remain mg
+        # self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 5, SET_LCOE_MG_PV_HYBRID + "{}".format(year)] = 0.01 # ToDo ensure remain mg - needed?
 
         logging.info('Calculate minigrid Wind Hybrid LCOE')
         self.df[SET_LCOE_MG_WIND + "{}".format(year)], mg_wind_investment, mg_wind_capacity, wind_lv_km, wind_mv_km, wind_transf = \
@@ -2793,7 +2776,7 @@ class SettlementProcessor:
         self.df.loc[self.df[SET_LCOE_GRID + "{}".format(year)] < 99, SET_MIN_OVERALL + "{}".format(year)] = 'Grid' + "{}".format(year)
 
         # If mini-grids are not allowed to be interconnected, ensure they remain mini-grids
-        if not mg_interconnection:
+        if mg_interconnection == 0:
             self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 7,
                         SET_MIN_OVERALL + "{}".format(year)] = SET_LCOE_MG_HYDRO + "{}".format(year)
             self.df.loc[self.df[SET_ELEC_FINAL_CODE + "{}".format(year - time_step)] == 5,
@@ -2825,7 +2808,6 @@ class SettlementProcessor:
         sa_diesel = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 2, 1, 0))
         sa_pv = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 3, 1, 0))
         mg_diesel = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 4, 1, 0))
-        # mg_pv = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 5, 1, 0))
         mg_pv_hybrid = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 5, 1, 0))
         mg_wind = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 6, 1, 0))
         mg_hydro = pd.DataFrame(np.where(self.df[SET_MIN_OVERALL_CODE + "{}".format(year)] == 7, 1, 0))
