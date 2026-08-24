@@ -73,26 +73,52 @@ This file contains all of the columns included in the *OnSSET_InputFile_Calibrat
 | Pop20*XX* |	Float |	people |	Projected population at the year |
 | NewConnections20*XX* |	Float |	Households |	Households that need to be electrified by the year |
 | EnergyPerSettlement20*XX* |	Float |	kWh |	Estimated electricity demand target in the settlement based on new connections |
-| MG_Hydro20*XX* |	Float |	USD/kWh |	LCOE estimated for mini-grid hydro in the year |
 | MG_PVHybrid20*XX* |	Float |	USD/kWh |	LCOE estimated for mini-grid pv/diesel/battery hybrid in the year |
 | MG_Wind20*XX* |	Float |	USD/kWh |	LCOE estimated for mini-grid wind/diesel/battery hybrid in the year |
+| MG_Hydro20*XX* |	Float |	USD/kWh |	LCOE estimated for mini-grid hydro in the year |
 | SA_PV20*XX* |	Float |	USD/kWh |	LCOE estimated for stand-alone PV (SHS) in the year |
 | Minimum_Tech_Off_grid20*XX* |	String |	- |	The off-grid technology that can meet the demand at the lowest LCOE in the year |
 | Minimum_LCOE_Off_grid20*XX* |	Float |	USD/kWh |	LCOE estimated for the minimum off-grid technology in the year |
-| OffGridInvestmentCost20*XX* |	Float |	USD |	Investment cost for the minimum off-grid technology in the year |
 | Grid20*XX* |	Float |	USD/kWh |	LCOE estimated for the Grid in the year |
 | NewGridExtensionDist20*XX* |	Float |	km |	Indicating the distance of the grid, if settlement gets grid electrified in the process |
-| MinimumOverall20*XX* |	String |	tech abbreviation |	Abbreviation defining type of off-grid technology providing electricity in the step year |
-| MinimumOverallLCOE20*XX* |	Float |	USD/kWh |	LCOE of the least cost off grid option selected |
-| MinimumOverallCode20*XX* |	Integer |	1 - 7 code |	Code defining type of off-grid technology providing electricity in the step year |
-| InvestmentCost20*XX* |	Float |	USD |	Total investment if electrification is achieved |
-| InvestmentPerConnection20*XX* |	Float |	USD/capita |	Estimated investment per connection if electrification is achieved |
-| ElecStatusIn20*XX* |	Integer |	0-1 |	Final electrification status in the step year (after running prioritization algorithm) |
+| MinimumOverall20*XX* |	String |	tech abbreviation |	Abbreviation defining type of technology providing electricity in the year |
+| MinimumOverallLCOE20*XX* |	Float |	USD/kWh |	LCOE of the least cost technology option selected |
+| MinimumOverallCode20*XX* |	Integer |	1 - 10 code |	Code defining type of technology providing electricity in the step year |
+| FinalElecCode20*XX* |	Integer |	1 - 99 code |	Code defining type of technology providing electricity in the step year, 99 if remains unelectrified |
+| ElecPop20*XX* |	Float |	people |	Population in settlement assumed to have access to electricity in the specific year |
+| ElecStatusIn20*XX* |	Integer |	0-1 |	Final electrification status in the step year (after running prioritization algorithm), 0 if unelectrified, 1 if electrified |
+| InvestmentCost20*XX* |	Float |	USD |	Total investment in the time-step if electrification is achieved |
+| InvestmentPerConnection20*XX* |	Float |	USD/household |	Estimated investment per connection if electrification is achieved |
 | NewCapacity20*XX* |	Float |	kW |	Additional capacity for the least cost technology identified in the step year |
+| MV_km20*XX* |	Float |	km |	km of MV lines required for the least cost technology identified in the step year |
+| LV_km20*XX* |	Float |	km |	km of LV lines required for the least cost technology identified in the step year |
+| DistTransformers20*XX* |	Integer |	- |	Number of new distribution transformers (MV/LV) required for the least cost technology identified in the step year |
 | TotalEnergyPerCell |	Float |	kWh/year |	Total electricity demand (all sectors considered) in the settlement by the end year of the analysis |
 | Tier |	Int |	1-5 |	Tier classification of the consumption per capita in the settlement |
-| Technology20*XX* |	String |	- |	Name of the technology in the settlement in the year, or ‘unelectrified’ |
+| InvestmentCostTotal |	Float |	USD |	Total investment in all time-steps if electrification is achieved |
+| NewCapacityTotal |	Float |	kW |	Additional capacity in all time-steps for the least cost technology identified |
+| NewCapacityTotalMW |	Float |	MW |	Additional capacity in all time-steps for the least cost technology identified - in units of MW |
+| NewHHConnectionsTotal |	Float |	Households |	Households that need to be electrified in total across all time-steps |
+| InvestmentCostConnectionTotal |	Float |	USD/household |	Estimated investment per connection, weighted average across all time-steps |
+| LCOETotal |	Float |	USD/kWh |	LCOE of the least cost option selected, weighted average across all time-steps |
+| Technology20*XX* |	String |	Name |	Name of technology providing electricity in the year |
+| New_MV_Lines_(km) |	Float |	km |	km of MV lines required across all time-steps for the least cost technology identified |
+| New_LV_Lines_(km) |	Float |	km |	km of LV lines required across all time-steps for the least cost technology identified |
+| New_Distribution_Transformers_(75_KVA) |	Integer |	- |	Number of new distribution transformers (MV/LV) required across all time-steps for the least cost technology identified |
+| InvestmentGen20*XX* |	Float |	USD |	Investment required in the time-step for generation |
+| InvestmentDist20*XX* |	Float |	USD |	Investment required in the time-step for distribution |
+| InvestmentGen |	Float |	USD |	Total investment in all time-steps for generation |
+| InvestmentDist |	Float |	USD |	Total investment in all time-steps for distribution |
+| AlternativeTech |	String |	Name |	Name of second lowest least-cost option |
+| Schools |	Integer |	- |	Number of schools in settlement |
+| HealthFacilities |	Integer |	- |	Number of health facilities in settlement |
+| ElectrificationStatus |	String |	Name |	Electrification status of the settlement in the start year (unelectrified/grid-electrified/off-grid electrified) |
 | AnnualEmissions20*XX* |	Float |	kg CO2 eq. / year |	Estimated new emissions induced by the selected technology for new connections in that year |
+| TechnologySelection |	String |	Name |	Name of technology providing electricity by the end of the analysis |
+| LCOETotal |	Float |	USD/kWh |	LCOE per technology type (weighted average by connections) for summary table on platform |
+| Average_LCOE_(USD/kWh) |	Float |	USD/kWh |	Average LCOE across all technologies (weighted average by connections) for summary number on platform |
+| InvestmentCostConnectionSummary |	Float |	USD/connection |	Connection cost per technology type (weighted average by connections) for summary table on platform |
+| AverageConnectionCost_(USD/household) |	Float |	USD/connection |	Connection cost across all technologies (weighted average by connections) for summary number on platform |
 
 The second output data is a file with summary results for the entire country, saved as a csv (*Scenario_name*_Summaries.csv* - Note that ***Scenario_name*** can be replaced with any name by the user) in outputs/scenarios.
 The following summary information is provided for each technology type as well as combined (in the Total row):
